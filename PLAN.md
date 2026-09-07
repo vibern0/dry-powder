@@ -96,38 +96,38 @@ DONE         Implemented, tested, and documented enough for the next phase.
 
 ## Phase 3: Dry Powder Opcode Core
 
-**Status:** `TODO`
+**Status:** `DONE`
 
 **Purpose:** Enforce shared reserve capacity and dynamic reservation pricing during quote and swap.
 
 **Tasks:**
 
-- [ ] Create `DryPowder.sol`.
-- [ ] Parse opcode args as `bytes32 reserveId`.
-- [ ] Load reserve by `ctx.query.maker` and `reserveId`.
-- [ ] Require active reserve.
-- [ ] Require `ctx.query.tokenOut == reserve.reserveToken`.
-- [ ] Require `ctx.query.tokenIn` is an existing leg asset.
-- [ ] Calculate global remaining reserve.
-- [ ] Calculate leg remaining allocation.
-- [ ] Read maker reserve-token wallet balance.
-- [ ] Optionally cap by Aqua allowance if clean to implement.
-- [ ] Calculate current tranche multiplier and tranche remaining capacity.
-- [ ] Set capacity to the minimum of all limits.
-- [ ] Apply price multiplier to `ctx.swap.balanceOut`.
-- [ ] Scale `ctx.swap.balanceIn` and `ctx.swap.balanceOut` down to capacity while preserving maker-favorable rounding.
-- [ ] Call `ctx.runLoop()` so downstream `LimitSwap` determines final amounts.
-- [ ] During quote/static context, do not mutate state.
-- [ ] During swap/non-static context, update `reserve.spent` and `leg.spent`.
-- [ ] Emit `ReserveConsumed`.
+- [x] Create `DryPowder.sol`.
+- [x] Parse opcode args as `bytes32 reserveId`.
+- [x] Load reserve by `ctx.query.maker` and `reserveId`.
+- [x] Require active reserve.
+- [x] Require `ctx.query.tokenOut == reserve.reserveToken`.
+- [x] Require `ctx.query.tokenIn` is an existing leg asset.
+- [x] Calculate global remaining reserve.
+- [x] Calculate leg remaining allocation.
+- [x] Read maker reserve-token wallet balance.
+- [x] Optionally cap by Aqua allowance if clean to implement.
+- [x] Calculate current tranche multiplier and tranche remaining capacity.
+- [x] Set capacity to the minimum of all limits.
+- [x] Apply price multiplier to `ctx.swap.balanceOut`.
+- [x] Scale `ctx.swap.balanceIn` and `ctx.swap.balanceOut` down to capacity while preserving maker-favorable rounding.
+- [x] Call `ctx.runLoop()` so downstream `LimitSwap` determines final amounts.
+- [x] During quote/static context, do not mutate state.
+- [x] During swap/non-static context, update `reserve.spent` and `leg.spent`.
+- [x] Emit `ReserveConsumed`.
 
 **Done Means:**
 
-- [ ] Quote reflects reserve state but does not change storage.
-- [ ] Swap updates exact consumed USDC amount.
-- [ ] Wrong-direction swaps revert.
-- [ ] Unregistered assets revert.
-- [ ] Capacity never exceeds global remaining, leg remaining, wallet balance, or tranche remaining.
+- [x] Quote reflects reserve state but does not change storage.
+- [x] Swap updates exact consumed USDC amount.
+- [x] Wrong-direction swaps revert.
+- [x] Unregistered assets revert.
+- [x] Capacity never exceeds global remaining, leg remaining, wallet balance, or tranche remaining.
 
 ---
 

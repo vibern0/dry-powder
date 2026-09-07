@@ -115,6 +115,15 @@ describe("Phase 2 DryPowderRouter", function () {
     const dryPowderInstruction = buildCustomInstruction(DRY_POWDER_OPCODE, RESERVE_ID);
     const { order, takerTraits } = await buildEthForUsdcOrder(fixture, dryPowderInstruction);
 
+    await router.connect(maker).createReserve(
+      RESERVE_ID,
+      await mUSDC.getAddress(),
+      ethers.parseUnits("10000", 6),
+      [ethers.parseUnits("10000", 6)],
+      [10000]
+    );
+    await router.connect(maker).addLeg(RESERVE_ID, await mETH.getAddress(), ethers.parseUnits("6000", 6));
+    await router.connect(maker).activateReserve(RESERVE_ID);
     await shipAndApprove(fixture, order, takerTraits);
 
     const tx = router.connect(taker).swap(order, ethers.parseEther("1"), takerTraits);

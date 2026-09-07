@@ -24,7 +24,7 @@ contract DryPowderStorage {
         mapping(address maker => mapping(bytes32 reserveId => uint256)) legCounts;
     }
 
-    bytes32 private constant STORAGE_SLOT = keccak256(
+    bytes32 internal constant STORAGE_SLOT = keccak256(
         abi.encode(uint256(keccak256("dry-powder.storage.v1")) - 1)
     ) & ~bytes32(uint256(0xff));
 
@@ -119,14 +119,14 @@ contract DryPowderStorage {
         return _layout().legs[maker][reserveId][token];
     }
 
-    function _layout() private pure returns (Layout storage $) {
+    function _layout() internal pure returns (Layout storage $) {
         bytes32 slot = STORAGE_SLOT;
         assembly {
             $.slot := slot
         }
     }
 
-    function _requireReserve(Reserve storage reserve) private view {
+    function _requireReserve(Reserve storage reserve) internal view {
         if (!reserve.exists) revert ReserveNotFound();
     }
 
