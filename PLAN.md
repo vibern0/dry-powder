@@ -46,28 +46,28 @@ DONE         Implemented, tested, and documented enough for the next phase.
 
 ## Phase 1: Dry Powder Storage and Reserve Lifecycle
 
-**Status:** `TODO`
+**Status:** `DONE`
 
 **Purpose:** Add shared reserve state keyed by `maker + reserveId`.
 
 **Tasks:**
 
-- [ ] Create `DryPowderStorage.sol` with namespaced storage.
-- [ ] Define `Reserve` state: reserve token, total budget, spent amount, thresholds, multipliers, active flag.
-- [ ] Define `Leg` state: max spend, spent amount, exists flag.
-- [ ] Implement `createReserve(...)`.
-- [ ] Implement `addLeg(...)`.
-- [ ] Implement `activateReserve(...)`.
-- [ ] Enforce reserve immutability after activation.
-- [ ] Add lifecycle events: `ReserveCreated`, `LegAdded`, `ReserveActivated`.
-- [ ] Add unit tests for validation, maker ownership, activation, and immutability.
+- [x] Create `DryPowderStorage.sol` with namespaced storage.
+- [x] Define `Reserve` state: reserve token, total budget, spent amount, thresholds, multipliers, active flag.
+- [x] Define `Leg` state: max spend, spent amount, exists flag.
+- [x] Implement `createReserve(...)`.
+- [x] Implement `addLeg(...)`.
+- [x] Implement `activateReserve(...)`.
+- [x] Enforce reserve immutability after activation.
+- [x] Add lifecycle events: `ReserveCreated`, `LegAdded`, `ReserveActivated`.
+- [x] Add unit tests for validation, maker ownership, activation, and immutability.
 
 **Done Means:**
 
-- [ ] Maker can create one inactive reserve with `10,000 mUSDC`.
-- [ ] Maker can add ETH, WBTC, and LINK legs with overcommitted allocations.
-- [ ] Activated reserve cannot be reconfigured.
-- [ ] Tests prove two makers with the same `reserveId` do not collide.
+- [x] Maker can create one inactive reserve with `10,000 mUSDC`.
+- [x] Maker can add ETH, WBTC, and LINK legs with overcommitted allocations.
+- [x] Activated reserve cannot be reconfigured.
+- [x] Tests prove two makers with the same `reserveId` do not collide.
 
 ---
 
