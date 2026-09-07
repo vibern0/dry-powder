@@ -5,7 +5,7 @@
 
 **Goal:** Build a working MVP that proves one shared stablecoin reserve can safely coordinate three Aqua strategies across ETH, WBTC, and LINK.
 
-**Current Status:** `TODO`
+**Current Status:** `IN PROGRESS`
 
 **MVP Boundary:** No backend infra is required. Build the core with Solidity, Hardhat, TypeScript, official Aqua/SwapVM contracts, tests, and demo scripts. A web UI is optional after the invariant is proven.
 
@@ -23,24 +23,24 @@ DONE         Implemented, tested, and documented enough for the next phase.
 
 ## Phase 0: Project Foundation
 
-**Status:** `TODO`
+**Status:** `DONE`
 
 **Purpose:** Create the local development base and verify the official 1inch stack works before adding Dry Powder logic.
 
 **Tasks:**
 
-- [ ] Choose foundation: `1inch/swap-vm-template` or clean Hardhat project importing official `1inch/swap-vm` and `1inch/aqua`.
-- [ ] Set up `Solidity 0.8.30`, Hardhat, TypeScript, viem or ethers, and test scripts.
-- [ ] Deploy official Aqua, SwapVM/router dependencies, WETH/mock dependencies, and mock ERC20 assets locally.
-- [ ] Add mock tokens: `mUSDC`, `mETH`, `mWBTC`, `mLINK`.
-- [ ] Confirm maker can approve Aqua and hold `10,000 mUSDC`.
-- [ ] Confirm a basic official SwapVM limit order can quote and settle through Aqua.
+- [x] Choose foundation: `1inch/swap-vm-template` or clean Hardhat project importing official `1inch/swap-vm` and `1inch/aqua`.
+- [x] Set up `Solidity 0.8.30`, Hardhat, TypeScript, viem or ethers, and test scripts.
+- [x] Deploy official Aqua, SwapVM/router dependencies, WETH/mock dependencies, and mock ERC20 assets locally.
+- [x] Add mock tokens: `mUSDC`, `mETH`, `mWBTC`, `mLINK`.
+- [x] Confirm maker can approve Aqua and hold `10,000 mUSDC`.
+- [x] Confirm a basic official SwapVM limit order can quote and settle through Aqua.
 
 **Done Means:**
 
-- [ ] `hardhat test` passes for official baseline deploy and settlement.
-- [ ] Local scripts can deploy the base contracts repeatably.
-- [ ] No Dry Powder-specific code exists yet except placeholders or empty files.
+- [x] `hardhat test` passes for official baseline deploy and settlement.
+- [x] Local scripts can deploy the base contracts repeatably.
+- [x] No Dry Powder-specific code exists yet except placeholders or empty files.
 
 ---
 
@@ -268,4 +268,3 @@ DONE         Implemented, tested, and documented enough for the next phase.
 - [ ] Demo proves `quote -> fill -> sibling repricing`.
 - [ ] Aggregate reserve spend never exceeds the actual configured reserve budget.
 - [ ] No backend infra is required.
-
