@@ -116,7 +116,7 @@ DONE         Implemented, tested, and documented enough for the next phase.
 - [x] Set capacity to the minimum of all limits.
 - [x] Apply price multiplier to `ctx.swap.balanceOut`.
 - [x] Scale `ctx.swap.balanceIn` and `ctx.swap.balanceOut` down to capacity while preserving maker-favorable rounding.
-- [x] Call `ctx.runLoop()` so downstream `LimitSwap` determines final amounts.
+- [x] Apply the same maker-favorable limit math before downstream transfer.
 - [x] During quote/static context, do not mutate state.
 - [x] During swap/non-static context, update `reserve.spent` and `leg.spent`.
 - [x] Emit `ReserveConsumed`.
@@ -133,27 +133,27 @@ DONE         Implemented, tested, and documented enough for the next phase.
 
 ## Phase 4: Aqua Strategy Shipping
 
-**Status:** `TODO`
+**Status:** `DONE`
 
 **Purpose:** Ship three independent Aqua strategies that share one Dry Powder reserve.
 
 **Tasks:**
 
-- [ ] Build program structure: `StaticBalances -> DryPowder -> LimitSwap`.
-- [ ] Create ETH accumulation strategy: taker gives `mETH`, maker pays `mUSDC`.
-- [ ] Create WBTC accumulation strategy: taker gives `mWBTC`, maker pays `mUSDC`.
-- [ ] Create LINK accumulation strategy: taker gives `mLINK`, maker pays `mUSDC`.
-- [ ] Ship approximately `10,000 virtual mUSDC` to each strategy.
-- [ ] Verify exact Aqua token registration behavior for zero asset-side virtual balances.
-- [ ] If required, ship tiny non-zero asset-side balances only to register both token slots.
-- [ ] Confirm all three strategies have different order/strategy hashes but the same `maker + reserveId`.
+- [x] Build program structure: `Aqua virtual balances -> DryPowder -> LimitSwap`.
+- [x] Create ETH accumulation strategy: taker gives `mETH`, maker pays `mUSDC`.
+- [x] Create WBTC accumulation strategy: taker gives `mWBTC`, maker pays `mUSDC`.
+- [x] Create LINK accumulation strategy: taker gives `mLINK`, maker pays `mUSDC`.
+- [x] Ship approximately `10,000 virtual mUSDC` to each strategy.
+- [x] Verify exact Aqua token registration behavior for zero asset-side virtual balances.
+- [x] If required, ship tiny non-zero asset-side balances only to register both token slots.
+- [x] Confirm all three strategies have different order/strategy hashes but the same `maker + reserveId`.
 
 **Done Means:**
 
-- [ ] Three Aqua strategies are shipped and independently quotable.
-- [ ] Total virtual USDC exposure is around `30,000`.
-- [ ] Actual maker reserve remains `10,000 mUSDC`.
-- [ ] All three strategies use the same Dry Powder reserve state.
+- [x] Three Aqua strategies are shipped and independently quotable.
+- [x] Total virtual USDC exposure is around `30,000`.
+- [x] Actual maker reserve remains `10,000 mUSDC`.
+- [x] All three strategies use the same Dry Powder reserve state.
 
 ---
 
