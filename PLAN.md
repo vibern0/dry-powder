@@ -73,24 +73,24 @@ DONE         Implemented, tested, and documented enough for the next phase.
 
 ## Phase 2: Custom Router and Opcode Wiring
 
-**Status:** `TODO`
+**Status:** `DONE`
 
 **Purpose:** Create a custom SwapVM router that can dispatch the Dry Powder opcode and otherwise use normal limit-order opcodes.
 
 **Tasks:**
 
-- [ ] Create `DryPowderRouter.sol`.
-- [ ] Inherit from official SwapVM base contracts and limit-order opcode support.
-- [ ] Recheck the current official opcode table before choosing the custom opcode value.
-- [ ] Add a `DRY_POWDER_OPCODE` constant or explicit enum entry in the forked opcode list.
-- [ ] Implement dispatch so Dry Powder handles only its opcode and delegates everything else to existing limit opcodes.
-- [ ] Add tests proving non-Dry-Powder limit opcodes still work through the custom router.
+- [x] Create `DryPowderRouter.sol`.
+- [x] Inherit from official SwapVM base contracts and limit-order opcode support.
+- [x] Recheck the current official opcode table before choosing the custom opcode value.
+- [x] Add a `DRY_POWDER_OPCODE` constant or explicit enum entry in the forked opcode list.
+- [x] Implement dispatch so Dry Powder handles only its opcode and delegates everything else to existing limit opcodes.
+- [x] Add tests proving non-Dry-Powder limit opcodes still work through the custom router.
 
 **Done Means:**
 
-- [ ] Router deploys cleanly.
-- [ ] Existing limit swap behavior still works.
-- [ ] Dry Powder opcode can be reached by a program without breaking normal SwapVM execution.
+- [x] Router deploys cleanly.
+- [x] Existing limit swap behavior still works.
+- [x] Dry Powder opcode can be reached by a program without breaking normal SwapVM execution.
 
 ---
 

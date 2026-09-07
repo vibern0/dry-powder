@@ -11,12 +11,12 @@ async function main() {
   const weth = await WETHMock.deploy();
   await weth.waitForDeployment();
 
-  const LimitSwapVMRouter = await ethers.getContractFactory("LimitSwapVMRouter");
-  const swapVM = await LimitSwapVMRouter.deploy(
+  const DryPowderRouter = await ethers.getContractFactory("DryPowderRouter");
+  const swapVM = await DryPowderRouter.deploy(
     await aqua.getAddress(),
     await weth.getAddress(),
     owner.address,
-    "DryPowderLimitSwapVM",
+    "DryPowderRouter",
     "1"
   );
   await swapVM.waitForDeployment();
@@ -41,6 +41,7 @@ async function main() {
     maker: maker.address,
     aqua: await aqua.getAddress(),
     swapVM: await swapVM.getAddress(),
+    dryPowderOpcode: Number(await swapVM.DRY_POWDER_OPCODE()),
     weth: await weth.getAddress(),
     tokens: {
       mUSDC: await mUSDC.getAddress(),

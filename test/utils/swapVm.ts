@@ -38,6 +38,10 @@ function instruction(opcode: number, args: string): string {
     body;
 }
 
+export function buildCustomInstruction(opcode: number, args: string): string {
+  return "0x" + instruction(opcode, args);
+}
+
 export function buildLimitProgram(direction: boolean): string {
   const directionArg = direction ? "80" : "00";
 
