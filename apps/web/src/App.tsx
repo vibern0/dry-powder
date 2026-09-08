@@ -169,7 +169,9 @@ export function App() {
               {pending === "switch" ? "Switching..." : "Switch to Sepolia"}
             </button>
           ) : (
-            <div className="wallet-chip">{shortAddress(wallet.account)} · Sepolia</div>
+            <div className={wallet.gasBalance === 0n ? "wallet-chip warning" : "wallet-chip"}>
+              {shortAddress(wallet.account)} · {wallet.gasBalanceLabel}
+            </div>
           )}
           <div className="step-list">
             {setupSteps.map((step) => (

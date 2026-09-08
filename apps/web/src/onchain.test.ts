@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { encodeAbiParameters, keccak256, parseUnits } from "viem";
 import { AQUA_ADDRESS, DRY_POWDER_ROUTER, TOKENS } from "./onchain/constants";
-import { buildSetupPlan, buildStrategy, createReserveId, usdc } from "./onchain/strategy";
+import { assertHasSepoliaGas, buildSetupPlan, buildStrategy, createReserveId, formatEthBalance, usdc } from "./onchain/strategy";
 
 describe("onchain strategy helpers", () => {
   it("creates deterministic reserve ids from maker and nonce", () => {
@@ -45,5 +45,11 @@ describe("onchain strategy helpers", () => {
     expect(plan.shipTransactions[0].value).toBe(0n);
     expect(plan.shipTransactions[0].data.startsWith("0xf50b870f")).toBe(true);
     expect(plan.reserveThresholds).toEqual([usdc("4000"), usdc("7500"), usdc("10000")]);
+  });
+
+  it("formats and guards Sepolia gas balance before transactions", () => {
+    expect(formatEthBalance(123456789000000000n)).toBe("0.123456 ETH");
+    expect(() => assertHasSepoliaGas(0n)).toThrow("Connected Sepolia account has 0 ETH");
+    expect(() => assertHasSepoliaGas(500000000000000n)).not.toThrow();
   });
 });

@@ -16,6 +16,7 @@ import {
 import { sepolia } from "viem/chains";
 import { AQUA_ADDRESS, DRY_POWDER_ROUTER, MOCK_ERC20_ABI, ROUTER_ABI, SEPOLIA_CHAIN_ID, TOKENS } from "./constants";
 import { buildSetupPlan, buildStrategy, createReserveId, strategyInputs, usdc, type LegKey } from "./strategy";
+import { assertHasSepoliaGas, formatEthBalance } from "./strategy";
 
 export type StepKey = "mint" | "approveAqua" | "createReserve" | "addLegs" | "activateReserve" | "shipStrategies" | "quote" | "fillEth";
 
@@ -23,6 +24,8 @@ export type WalletState = {
   account: Address;
   chainId: number;
   reserveId: Hex;
+  gasBalance: bigint;
+  gasBalanceLabel: string;
 };
 
 export type TransactionUpdate = {
@@ -53,7 +56,8 @@ export async function connectWallet(): Promise<WalletState> {
   return {
     account,
     chainId: Number.parseInt(chainHex, 16),
-    reserveId: getOrCreateReserveId(account)
+    reserveId: getOrCreateReserveId(account),
+    ...(await readGasBalance(account))
   };
 }
 
@@ -90,6 +94,7 @@ export function createFreshWalletReserve(account: Address): Hex {
 
 export async function mintMockTokens(account: Address, onUpdate: SendUpdate) {
   const { publicClient, walletClient } = makeClients(account);
+  assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
   const mints = [
     { token: TOKENS.mUSDC, amount: usdc("10000"), label: "10,000 mUSDC" },
     { token: TOKENS.mETH, amount: parseAsset("100", "eth"), label: "100 mETH" },
@@ -117,6 +122,7 @@ export async function approveAqua(account: Address, onUpdate: SendUpdate) {
 
 export async function createReserve(account: Address, reserveId: Hex, onUpdate: SendUpdate) {
   const { publicClient, walletClient } = makeClients(account);
+  assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
   const plan = buildSetupPlan(account, reserveId);
   const hash = await walletClient.writeContract({
     account,
@@ -132,6 +138,7 @@ export async function createReserve(account: Address, reserveId: Hex, onUpdate: 
 
 export async function addLegs(account: Address, reserveId: Hex, onUpdate: SendUpdate) {
   const { publicClient, walletClient } = makeClients(account);
+  assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
   const plan = buildSetupPlan(account, reserveId);
   for (const leg of plan.legs) {
     const hash = await walletClient.writeContract({
@@ -149,6 +156,7 @@ export async function addLegs(account: Address, reserveId: Hex, onUpdate: SendUp
 
 export async function activateReserve(account: Address, reserveId: Hex, onUpdate: SendUpdate) {
   const { publicClient, walletClient } = makeClients(account);
+  assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
   const hash = await walletClient.writeContract({
     account,
     chain: sepolia,
@@ -163,6 +171,7 @@ export async function activateReserve(account: Address, reserveId: Hex, onUpdate
 
 export async function shipStrategies(account: Address, reserveId: Hex, onUpdate: SendUpdate) {
   const { publicClient, walletClient } = makeClients(account);
+  assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
   const plan = buildSetupPlan(account, reserveId);
   for (const [index, transaction] of plan.shipTransactions.entries()) {
     const hash = await walletClient.sendTransaction({
@@ -258,6 +267,7 @@ export async function readOnchainSnapshot(account: Address, reserveId: Hex) {
 
 async function approveToken(account: Address, token: Address, spender: Address, step: StepKey, message: string, onUpdate: SendUpdate) {
   const { publicClient, walletClient } = makeClients(account);
+  assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
   const hash = await walletClient.writeContract({
     account,
     chain: sepolia,
@@ -276,6 +286,12 @@ function makeClients(account?: Address): { publicClient: PublicClient; walletCli
     publicClient: createPublicClient({ chain: sepolia, transport: custom(provider) }),
     walletClient: createWalletClient({ account, chain: sepolia, transport: custom(provider) })
   };
+}
+
+async function readGasBalance(account: Address) {
+  const publicClient = createPublicClient({ chain: sepolia, transport: custom(getProvider()) });
+  const gasBalance = await publicClient.getBalance({ address: account });
+  return { gasBalance, gasBalanceLabel: formatEthBalance(gasBalance) };
 }
 
 function parseAsset(amount: string, key: LegKey) {

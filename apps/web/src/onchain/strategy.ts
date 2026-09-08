@@ -90,6 +90,18 @@ export function usdc(amount: string) {
   return parseUnits(amount, 6);
 }
 
+export function formatEthBalance(balance: bigint) {
+  const integer = balance / 10n ** 18n;
+  const fractional = ((balance % 10n ** 18n) / 10n ** 12n).toString().padStart(6, "0");
+  return `${integer}.${fractional} ETH`;
+}
+
+export function assertHasSepoliaGas(balance: bigint) {
+  if (balance === 0n) {
+    throw new Error("Connected Sepolia account has 0 ETH for gas. Check that MetaMask is using the funded Sepolia account.");
+  }
+}
+
 export function createReserveId(maker: Address, nonce: string): Hex {
   return keccak256(stringToBytes(`dry-powder:web-demo:${maker}:${nonce}`));
 }

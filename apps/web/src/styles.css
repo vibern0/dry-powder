@@ -442,6 +442,11 @@ h1 {
   font-weight: 760;
 }
 
+.wallet-chip.warning {
+  background: rgba(255, 188, 87, 0.14);
+  color: #ffce85;
+}
+
 .network-card {
   margin-top: 16px;
   padding: 12px;
