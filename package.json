@@ -1,53 +1,25 @@
 {
-  "name": "dry-powder",
+  "name": "dry-powder-monorepo",
   "version": "0.0.0",
   "private": true,
-  "description": "Dry Powder MVP foundation for Aqua and SwapVM strategies.",
   "license": "MIT",
   "scripts": {
-    "precompile": "mkdir -p node_modules/forge-std contracts/hardhat-dependency-compiler && rsync -a node_modules/forge-std/src/ node_modules/forge-std/",
-    "build": "npm run precompile && hardhat compile",
-    "test": "npm run precompile && hardhat test",
-    "deploy:base": "hardhat run scripts/deploy-base.ts",
-    "demo": "hardhat run scripts/demo/full.ts",
-    "demo:setup": "hardhat run scripts/demo/setup.ts",
-    "demo:quote": "hardhat run scripts/demo/quote.ts",
-    "demo:fill": "hardhat run scripts/demo/fill.ts",
-    "demo:reprice": "hardhat run scripts/demo/reprice.ts",
-    "deploy:sepolia": "hardhat run scripts/sepolia/deploy.ts --network sepolia",
-    "sepolia:setup": "hardhat run scripts/sepolia/setup.ts --network sepolia",
-    "sepolia:quote": "hardhat run scripts/sepolia/quote.ts --network sepolia",
-    "sepolia:fill": "hardhat run scripts/sepolia/fill.ts --network sepolia",
-    "sepolia:reprice": "hardhat run scripts/sepolia/reprice.ts --network sepolia"
+    "build": "npm run build -w @dry-powder/contracts",
+    "test": "npm run test -w @dry-powder/contracts",
+    "deploy:base": "npm run deploy:base -w @dry-powder/contracts",
+    "demo": "npm run demo -w @dry-powder/contracts",
+    "demo:setup": "npm run demo:setup -w @dry-powder/contracts",
+    "demo:quote": "npm run demo:quote -w @dry-powder/contracts",
+    "demo:fill": "npm run demo:fill -w @dry-powder/contracts",
+    "demo:reprice": "npm run demo:reprice -w @dry-powder/contracts",
+    "deploy:sepolia": "npm run deploy:sepolia -w @dry-powder/contracts",
+    "sepolia:setup": "npm run sepolia:setup -w @dry-powder/contracts",
+    "sepolia:quote": "npm run sepolia:quote -w @dry-powder/contracts",
+    "sepolia:fill": "npm run sepolia:fill -w @dry-powder/contracts",
+    "sepolia:reprice": "npm run sepolia:reprice -w @dry-powder/contracts"
   },
-  "dependencies": {
-    "@1inch/aqua": "https://github.com/1inch/aqua#6f05aa1ac2dcf701b0e086ad5e7606515f1fa454",
-    "@1inch/solidity-utils": "6.9.7",
-    "@1inch/swap-vm": "https://github.com/1inch/swap-vm#b44977a1c7744c9caa6b7974d9b638ed4983cfd3",
-    "@openzeppelin/contracts": "5.4.0",
-    "dotenv": "16.4.5"
-  },
-  "devDependencies": {
-    "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
-    "@nomicfoundation/hardhat-ethers": "^3.0.0",
-    "@nomicfoundation/hardhat-network-helpers": "^1.0.9",
-    "@typechain/ethers-v6": "^0.5.1",
-    "@typechain/hardhat": "^9.1.0",
-    "@types/chai": "^4.3.5",
-    "@types/mocha": "^10.0.1",
-    "@types/node": "^24.7.2",
-    "chai": "^4.3.8",
-    "ethers": "^6.15.0",
-    "hardhat": "^2.22.15",
-    "hardhat-dependency-compiler": "^1.2.1",
-    "hardhat-tracer": "^3.4.0",
-    "rimraf": "^6.0.1",
-    "ts-node": "^10.9.2",
-    "typechain": "^8.3.2",
-    "typescript": "^5.9.3"
-  },
-  "overrides": {
-    "@1inch/solidity-utils": "6.9.7",
-    "@openzeppelin/contracts": "5.4.0"
-  }
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
 }

@@ -4,6 +4,14 @@ coverage/
 deployments/
 node_modules/
 typechain-types/
+packages/*/artifacts/
+packages/*/cache/
+packages/*/coverage/
+packages/*/deployments/
+packages/*/node_modules/
+packages/*/typechain-types/
+apps/*/dist/
+apps/*/node_modules/
 
 .env
 .DS_Store

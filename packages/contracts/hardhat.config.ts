@@ -3,8 +3,11 @@ import "@nomicfoundation/hardhat-chai-matchers";
 import "@typechain/hardhat";
 import "hardhat-dependency-compiler";
 import "hardhat-tracer";
-import "dotenv/config";
+import dotenv from "dotenv";
 import { HardhatUserConfig } from "hardhat/config";
+import path from "node:path";
+
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
 const config: HardhatUserConfig = {
   networks: {
