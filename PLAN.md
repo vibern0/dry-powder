@@ -159,30 +159,30 @@ DONE         Implemented, tested, and documented enough for the next phase.
 
 ## Phase 5: Invariant and Tranche Tests
 
-**Status:** `TODO`
+**Status:** `DONE`
 
 **Purpose:** Prove the core financial behavior and safety properties.
 
 **Tasks:**
 
-- [ ] Test initial prices: ETH `$2,700`, WBTC `$80,000`, LINK `$20`.
-- [ ] Fill one leg and prove sibling quotes update.
-- [ ] Test first tranche boundary: capacity stops at `$4,000`.
-- [ ] Test second tranche price multiplier: `95%`.
-- [ ] Test second boundary: capacity stops at `$7,500`.
-- [ ] Test final tranche price multiplier: `90%`.
-- [ ] Test aggregate spending can never exceed `$10,000`.
-- [ ] Test leg caps: ETH `<= $6,000`, WBTC `<= $6,000`, LINK `<= $4,000`.
-- [ ] Test maker wallet balance cap after manual reserve-token transfer.
-- [ ] Test quote state does not mutate and swap state does mutate.
-- [ ] If time permits, test sibling-strategy reentrancy/concurrency behavior.
+- [x] Test initial prices: ETH `$2,700`, WBTC `$80,000`, LINK `$20`.
+- [x] Fill one leg and prove sibling quotes update.
+- [x] Test first tranche boundary: capacity stops at `$4,000`.
+- [x] Test second tranche price multiplier: `95%`.
+- [x] Test second boundary: capacity stops at `$7,500`.
+- [x] Test final tranche price multiplier: `90%`.
+- [x] Test aggregate spending can never exceed `$10,000`.
+- [x] Test leg caps: ETH `<= $6,000`, WBTC `<= $6,000`, LINK `<= $4,000`.
+- [x] Test maker wallet balance cap after manual reserve-token transfer.
+- [x] Test quote state does not mutate and swap state does mutate.
+- [x] If time permits, test sibling-strategy reentrancy/concurrency behavior.
 
 **Done Means:**
 
-- [ ] Tests prove aggregate spending is bounded by the shared reserve.
-- [ ] Tests prove sibling repricing after a fill.
-- [ ] Tests prove tranche boundaries are piecewise, not blended.
-- [ ] Tests prove quote and swap behavior differ only by state mutation.
+- [x] Tests prove aggregate spending is bounded by the shared reserve.
+- [x] Tests prove sibling repricing after a fill.
+- [x] Tests prove tranche boundaries are piecewise, not blended.
+- [x] Tests prove quote and swap behavior differ only by state mutation.
 
 ---
 

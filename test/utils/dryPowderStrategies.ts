@@ -12,6 +12,7 @@ export interface DryPowderStrategy {
   reserveAmount: bigint;
   order: OrderStruct;
   takerTraits: string;
+  exactInTakerTraits: string;
 }
 
 export function buildDryPowderStrategy(args: {
@@ -47,6 +48,11 @@ export function buildDryPowderStrategy(args: {
     }),
     takerTraits: buildTakerTraits({
       isExactIn: false,
+      isAToB: direction,
+      useTransferFromAndAquaPush: true
+    }),
+    exactInTakerTraits: buildTakerTraits({
+      isExactIn: true,
       isAToB: direction,
       useTransferFromAndAquaPush: true
     })

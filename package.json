@@ -5,7 +5,7 @@
   "description": "Dry Powder MVP foundation for Aqua and SwapVM strategies.",
   "license": "MIT",
   "scripts": {
-    "precompile": "mkdir -p node_modules/forge-std && rsync -a node_modules/forge-std/src/ node_modules/forge-std/",
+    "precompile": "mkdir -p node_modules/forge-std contracts/hardhat-dependency-compiler && rsync -a node_modules/forge-std/src/ node_modules/forge-std/",
     "build": "npm run precompile && hardhat compile",
     "test": "npm run precompile && hardhat test",
     "deploy:base": "hardhat run scripts/deploy-base.ts"
