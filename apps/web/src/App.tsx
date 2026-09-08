@@ -1,43 +1,134 @@
 import { ArrowRight, Check, Coins, Droplets, ExternalLink, Gauge, Play, RotateCcw, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
-import { applyFill, formatUsd, initialDemo, selectTranche, summarizeReserve, type DemoState, type Leg } from "./demoModel";
+import { formatUsd, initialDemo, selectTranche, summarizeReserve, type DemoState, type Leg, type LegKey } from "./demoModel";
+import {
+  activateReserve,
+  addLegs,
+  approveAqua,
+  connectWallet,
+  createFreshWalletReserve,
+  createReserve,
+  executeEthFill,
+  hasInjectedWallet,
+  mintMockTokens,
+  quoteStrategies,
+  readOnchainSnapshot,
+  shipStrategies,
+  switchToSepolia,
+  type StepKey,
+  type TransactionUpdate,
+  type WalletState
+} from "./onchain/client";
+import { SEPOLIA_CHAIN_ID } from "./onchain/constants";
 
-const steps = [
-  "Mint mock mUSDC",
-  "Approve Aqua",
-  "Create reserve",
-  "Add legs",
-  "Activate",
-  "Ship strategies"
+const setupSteps: Array<{ key: StepKey; label: string }> = [
+  { key: "mint", label: "Mint mock tokens" },
+  { key: "approveAqua", label: "Approve Aqua" },
+  { key: "createReserve", label: "Create reserve" },
+  { key: "addLegs", label: "Add legs" },
+  { key: "activateReserve", label: "Activate" },
+  { key: "shipStrategies", label: "Ship strategies" }
 ];
 
 const txRows = [
   ["Network", "Sepolia"],
   ["Aqua registry", "0x1111...6a90a"],
   ["Router", "0xbaeE...256c"],
-  ["Mode", "Visual preview"]
+  ["Mode", "Live Sepolia"]
 ];
 
 export function App() {
   const [state, setState] = useState<DemoState>(initialDemo);
-  const [filled, setFilled] = useState(false);
+  const [wallet, setWallet] = useState<WalletState | null>(null);
+  const [completed, setCompleted] = useState<Partial<Record<StepKey, boolean>>>({});
+  const [pending, setPending] = useState<StepKey | "connect" | "switch" | "refresh" | null>(null);
+  const [eventLog, setEventLog] = useState<TransactionUpdate[]>([]);
+  const [quotes, setQuotes] = useState<Record<LegKey, string> | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const summary = useMemo(() => summarizeReserve(state), [state]);
   const tranche = selectTranche(state.reserve);
+  const wrongNetwork = wallet && wallet.chainId !== SEPOLIA_CHAIN_ID;
 
-  function runFill() {
-    if (filled) return;
-    setState(applyFill(state, "eth", 4000));
-    setFilled(true);
+  async function connect() {
+    await run("connect", async () => {
+      const next = await connectWallet();
+      setWallet(next);
+      setEventLog([{ step: "quote", message: `Wallet connected: ${shortAddress(next.account)}` }]);
+    });
   }
 
-  function reset() {
+  async function switchNetwork() {
+    await run("switch", async () => {
+      await switchToSepolia();
+      const next = await connectWallet();
+      setWallet(next);
+    });
+  }
+
+  async function rotateReserve() {
+    if (!wallet) return;
+    const reserveId = createFreshWalletReserve(wallet.account);
+    setWallet({ ...wallet, reserveId });
     setState(initialDemo);
-    setFilled(false);
+    setCompleted({});
+    setQuotes(null);
+    setEventLog([{ step: "quote", message: "Fresh reserve id ready for another demo run." }]);
+  }
+
+  async function refresh() {
+    if (!wallet) return;
+    await run("refresh", async () => {
+      const snapshot = await readOnchainSnapshot(wallet.account, wallet.reserveId);
+      setState(applySnapshot(snapshot.reserve.spent, snapshot.legs));
+    });
+  }
+
+  async function runSetupStep(step: StepKey) {
+    if (!wallet) return;
+    const actions: Record<StepKey, () => Promise<void>> = {
+      mint: () => mintMockTokens(wallet.account, pushEvent),
+      approveAqua: () => approveAqua(wallet.account, pushEvent),
+      createReserve: () => createReserve(wallet.account, wallet.reserveId, pushEvent),
+      addLegs: () => addLegs(wallet.account, wallet.reserveId, pushEvent),
+      activateReserve: () => activateReserve(wallet.account, wallet.reserveId, pushEvent),
+      shipStrategies: () => shipStrategies(wallet.account, wallet.reserveId, pushEvent),
+      quote: async () => {
+        const nextQuotes = await quoteStrategies(wallet.account, wallet.reserveId);
+        setQuotes(Object.fromEntries(nextQuotes.map((quote) => [quote.key, quote.label])) as Record<LegKey, string>);
+        pushEvent({ step: "quote", message: "Quotes refreshed from DryPowderRouter." });
+      },
+      fillEth: async () => {
+        await executeEthFill(wallet.account, wallet.reserveId, pushEvent);
+        setCompleted((previous) => ({ ...previous, fillEth: true }));
+        await refresh();
+      }
+    };
+
+    await run(step, async () => {
+      await actions[step]();
+      setCompleted((previous) => ({ ...previous, [step]: true }));
+    });
+  }
+
+  function pushEvent(update: TransactionUpdate) {
+    setEventLog((previous) => [update, ...previous].slice(0, 8));
+  }
+
+  async function run(active: typeof pending, action: () => Promise<void>) {
+    try {
+      setError(null);
+      setPending(active);
+      await action();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Transaction failed.");
+    } finally {
+      setPending(null);
+    }
   }
 
   return (
     <main className="app-shell">
-      <TopNav />
+      <TopNav wallet={wallet} pending={pending} onConnect={connect} />
 
       <section className="hero-grid">
         <div className="story-panel">
@@ -52,14 +143,15 @@ export function App() {
           </p>
 
           <div className="story-actions">
-            <button className="primary-action" onClick={runFill} disabled={filled}>
+            <button className="primary-action" onClick={() => runSetupStep("fillEth")} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
               <Play size={18} />
-              {filled ? "ETH fill complete" : "Preview ETH fill"}
+              {completed.fillEth ? "ETH fill complete" : "Execute ETH fill"}
             </button>
-            <button className="icon-action" onClick={reset} aria-label="Reset demo">
+            <button className="icon-action" onClick={rotateReserve} aria-label="Create fresh reserve id" disabled={!wallet || pending !== null}>
               <RotateCcw size={18} />
             </button>
           </div>
+          {error ? <div className="error-banner">{error}</div> : null}
         </div>
 
         <ReserveCard summary={summary} tranche={tranche} />
@@ -68,14 +160,25 @@ export function App() {
       <section className="workspace-grid">
         <div className="setup-column">
           <PanelTitle icon={<Wallet size={18} />} title="Setup Flow" />
+          {!wallet ? (
+            <button className="wide-action" onClick={connect} disabled={!hasInjectedWallet() || pending !== null}>
+              {pending === "connect" ? "Connecting..." : hasInjectedWallet() ? "Connect wallet" : "No wallet found"}
+            </button>
+          ) : wrongNetwork ? (
+            <button className="wide-action" onClick={switchNetwork} disabled={pending !== null}>
+              {pending === "switch" ? "Switching..." : "Switch to Sepolia"}
+            </button>
+          ) : (
+            <div className="wallet-chip">{shortAddress(wallet.account)} · Sepolia</div>
+          )}
           <div className="step-list">
-            {steps.map((step) => (
-              <div className="step-row" key={step}>
+            {setupSteps.map((step) => (
+              <button className="step-row" key={step.key} onClick={() => runSetupStep(step.key)} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
                 <span className="step-icon">
-                  <Check size={14} />
+                  {completed[step.key] ? <Check size={14} /> : pending === step.key ? "·" : ""}
                 </span>
-                <span>{step}</span>
-              </div>
+                <span>{pending === step.key ? "Confirm in wallet..." : step.label}</span>
+              </button>
             ))}
           </div>
 
@@ -86,14 +189,26 @@ export function App() {
                 <strong>{value}</strong>
               </div>
             ))}
+            <div className="network-row">
+              <span>Reserve id</span>
+              <strong>{wallet ? shortHash(wallet.reserveId) : "not connected"}</strong>
+            </div>
           </div>
         </div>
 
         <div className="legs-column">
           <PanelTitle icon={<Coins size={18} />} title="Aqua Strategies" />
+          <div className="strategy-actions">
+            <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
+              {pending === "quote" ? "Quoting..." : "Quote all"}
+            </button>
+            <button className="secondary-action" onClick={refresh} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
+              {pending === "refresh" ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
           <div className="leg-grid">
             {state.legs.map((leg) => (
-              <LegCard key={leg.key} leg={leg} active={leg.key === "eth" && filled} />
+              <LegCard key={leg.key} leg={leg} quote={quotes?.[leg.key]} active={leg.key === "eth" && Boolean(completed.fillEth)} />
             ))}
           </div>
         </div>
@@ -101,7 +216,7 @@ export function App() {
         <div className="events-column">
           <PanelTitle icon={<Gauge size={18} />} title="Quote Story" />
           <div className="event-list">
-            {state.eventLog.map((event) => (
+            {(eventLog.length ? eventLog.map(formatEvent) : state.eventLog).map((event) => (
               <div className="event-row" key={event}>
                 <ArrowRight size={15} />
                 <span>{event}</span>
@@ -109,8 +224,8 @@ export function App() {
             ))}
           </div>
           <div className="next-card">
-            <span>Next integration</span>
-            <strong>Replace preview state with viem reads and writes.</strong>
+            <span>Integration</span>
+            <strong>viem wallet writes, DryPowderRouter reads, Aqua SDK ship calldata.</strong>
             <ExternalLink size={16} />
           </div>
         </div>
@@ -119,7 +234,15 @@ export function App() {
   );
 }
 
-function TopNav() {
+function TopNav({
+  wallet,
+  pending,
+  onConnect
+}: {
+  wallet: WalletState | null;
+  pending: StepKey | "connect" | "switch" | "refresh" | null;
+  onConnect: () => void;
+}) {
   return (
     <nav className="top-nav">
       <div className="brand-lockup">
@@ -131,9 +254,27 @@ function TopNav() {
         <span>Reserve</span>
         <span>Strategies</span>
       </div>
-      <button className="connect-preview">Connect wallet</button>
+      <button className="connect-preview" onClick={onConnect} disabled={Boolean(wallet) || pending !== null || !hasInjectedWallet()}>
+        {wallet ? shortAddress(wallet.account) : pending === "connect" ? "Connecting..." : "Connect wallet"}
+      </button>
     </nav>
   );
+}
+
+function applySnapshot(spent: bigint, legs: { eth: { spent: bigint }; wbtc: { spent: bigint }; link: { spent: bigint } }): DemoState {
+  const spentNumber = Number(spent) / 1_000_000;
+  const reserve = { ...initialDemo.reserve, spent: spentNumber };
+  const activeTranche = selectTranche(reserve);
+  return {
+    ...initialDemo,
+    reserve,
+    legs: initialDemo.legs.map((leg) => ({
+      ...leg,
+      spent: Number(legs[leg.key].spent) / 1_000_000,
+      currentMaxPrice: (leg.baseMaxPrice * activeTranche.multiplierBps) / 10000
+    })),
+    eventLog: initialDemo.eventLog
+  };
 }
 
 function ReserveCard({ summary, tranche }: { summary: ReturnType<typeof summarizeReserve>; tranche: ReturnType<typeof selectTranche> }) {
@@ -178,7 +319,7 @@ function ReserveCard({ summary, tranche }: { summary: ReturnType<typeof summariz
   );
 }
 
-function LegCard({ leg, active }: { leg: Leg; active: boolean }) {
+function LegCard({ leg, quote, active }: { leg: Leg; quote?: string; active: boolean }) {
   const utilization = (leg.spent / leg.maxSpend) * 100;
   const changed = leg.currentMaxPrice !== leg.baseMaxPrice;
 
@@ -197,6 +338,7 @@ function LegCard({ leg, active }: { leg: Leg; active: boolean }) {
         <span>Max price</span>
         <strong>{formatUsd(leg.currentMaxPrice)}</strong>
       </div>
+      {quote ? <div className="live-quote">{quote}</div> : null}
       {changed ? <div className="repriced">Repriced from {formatUsd(leg.baseMaxPrice)}</div> : <div className="repriced muted">Initial quote</div>}
       <div className="leg-meter">
         <span style={{ width: `${utilization}%`, background: leg.allocationColor }} />
@@ -207,6 +349,18 @@ function LegCard({ leg, active }: { leg: Leg; active: boolean }) {
       </div>
     </article>
   );
+}
+
+function shortAddress(address: string) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function shortHash(hash: string) {
+  return `${hash.slice(0, 10)}...${hash.slice(-6)}`;
+}
+
+function formatEvent(event: TransactionUpdate) {
+  return event.hash ? `${event.message}: ${shortHash(event.hash)}` : event.message;
 }
 
 function PanelTitle({ icon, title }: { icon: React.ReactNode; title: string }) {

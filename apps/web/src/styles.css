@@ -104,6 +104,15 @@ button {
   font-weight: 760;
 }
 
+.connect-preview:disabled,
+.wide-action:disabled,
+.secondary-action:disabled,
+.step-row:disabled,
+.icon-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .hero-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(360px, 470px);
@@ -206,6 +215,20 @@ h1 {
   width: 46px;
   background: #24242b;
   color: #ffffff;
+}
+
+.error-banner {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 680px);
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 111, 111, 0.42);
+  border-radius: 8px;
+  background: rgba(75, 15, 21, 0.72);
+  color: #ffd5d5;
+  font-size: 14px;
+  line-height: 1.35;
 }
 
 .reserve-card,
@@ -356,22 +379,67 @@ h1 {
 
 .step-row {
   gap: 10px;
+  width: 100%;
   min-height: 42px;
   padding: 0 12px;
+  border: 0;
   border-radius: 8px;
   background: #18191f;
   color: #d7d9e4;
   font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.step-row:not(:disabled):hover,
+.secondary-action:not(:disabled):hover,
+.wide-action:not(:disabled):hover {
+  background: #22242b;
 }
 
 .step-icon {
   display: grid;
   place-items: center;
+  flex: 0 0 auto;
   width: 22px;
   height: 22px;
   border-radius: 50%;
   background: #122f24;
   color: #6cf6b1;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.wide-action,
+.secondary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 42px;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #08090a;
+  font-weight: 780;
+  cursor: pointer;
+}
+
+.wide-action {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.wallet-chip {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  margin-bottom: 12px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(108, 246, 177, 0.13);
+  color: #6cf6b1;
+  font-size: 14px;
+  font-weight: 760;
 }
 
 .network-card {
@@ -393,6 +461,20 @@ h1 {
 
 .leg-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.strategy-actions {
+  display: flex;
+  gap: 10px;
+  margin: -4px 0 14px;
+}
+
+.secondary-action {
+  min-width: 108px;
+  height: 36px;
+  background: #24262d;
+  color: #ffffff;
+  font-size: 14px;
 }
 
 .leg-card {
@@ -444,6 +526,17 @@ h1 {
   margin-top: 10px;
   color: #6cf6b1;
   font-size: 13px;
+}
+
+.live-quote {
+  min-height: 38px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: rgba(52, 199, 221, 0.11);
+  color: #b9f8ff;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .repriced.muted {
