@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import { Simulator } from "@1inch/solidity-utils/contracts/mixins/Simulator.sol";
 import { Context, ContextLib } from "@1inch/swap-vm/src/libs/VM.sol";
 import { SwapVM } from "@1inch/swap-vm/src/SwapVM.sol";
-import { LimitOpcodes } from "@1inch/swap-vm/src/opcodes/LimitOpcodes.sol";
+import { LimitSwap } from "@1inch/swap-vm/src/instructions/LimitSwap.sol";
 import { DryPowder } from "./DryPowder.sol";
 
-contract DryPowderRouter is Simulator, SwapVM, LimitOpcodes, DryPowder {
+contract DryPowderRouter is SwapVM, LimitSwap, DryPowder {
     using ContextLib for Context;
 
+    uint256 private constant SALT_OPCODE = 0x1e;
+    uint256 private constant LIMIT_SWAP_OPCODE = 0x15;
     uint256 public constant DRY_POWDER_OPCODE = 0x34;
+
+    error UnknownOpcode(uint256 opcode);
 
     event DryPowderOpcodeReached(
         address indexed maker,
@@ -25,7 +28,7 @@ contract DryPowderRouter is Simulator, SwapVM, LimitOpcodes, DryPowder {
         address owner,
         string memory name,
         string memory version
-    ) SwapVM(aqua, weth, owner, name, version) LimitOpcodes(aqua) {}
+    ) SwapVM(aqua, weth, owner, name, version) {}
 
     function _dispatch(Context memory ctx, uint256 opcode, bytes calldata args) internal override {
         if (opcode == DRY_POWDER_OPCODE) {
@@ -41,6 +44,15 @@ contract DryPowderRouter is Simulator, SwapVM, LimitOpcodes, DryPowder {
             return;
         }
 
-        _runOpcode(ctx, opcode, args);
+        if (opcode == LIMIT_SWAP_OPCODE) {
+            _limitSwap1D(ctx, args);
+            return;
+        }
+
+        if (opcode == SALT_OPCODE) {
+            return;
+        }
+
+        revert UnknownOpcode(opcode);
     }
 }

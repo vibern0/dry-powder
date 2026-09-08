@@ -210,7 +210,32 @@ DONE         Implemented, tested, and documented enough for the next phase.
 
 ---
 
-## Phase 7: Optional Web Demo
+## Phase 7: Sepolia Testnet Deploy
+
+**Status:** `DONE`
+
+**Purpose:** Prioritize a public testnet deployment that proves Dry Powder can run against Aqua onchain before any UI polish.
+
+**Tasks:**
+
+- [x] Reduce `DryPowderRouter` deployed bytecode under the public EVM `24,576` byte limit.
+- [x] Add Ethereum Sepolia network config without reading or modifying `.env`.
+- [x] Add deployment script that uses the official Aqua registry at `0x1111113ccf1426a8e30e2bff5e005d929bf6a90a`.
+- [x] Deploy `DryPowderRouter` and mock demo tokens to Sepolia.
+- [x] Add/setup Sepolia scripts for maker balances, approvals, reserve creation, legs, activation, and strategy shipping.
+- [x] Add Sepolia quote/fill/reprice scripts that exercise ETH, WBTC, and LINK demo strategies.
+- [ ] Optionally verify deployed contracts on Etherscan.
+- [x] Record deployed addresses and transaction hashes.
+
+**Done Means:**
+
+- [x] Sepolia deployment succeeds from a clean checkout with documented env var names.
+- [x] Sepolia demo proves shared reserve spending and sibling repricing using onchain transactions.
+- [x] No `.env` contents are read, printed, committed, or modified.
+
+---
+
+## Phase 8: Optional Web Demo
 
 **Status:** `TODO`
 
@@ -233,7 +258,7 @@ DONE         Implemented, tested, and documented enough for the next phase.
 
 ---
 
-## Phase 8: Final Polish and Submission
+## Phase 9: Final Polish and Submission
 
 **Status:** `TODO`
 

@@ -1,0 +1,11 @@
+packages:
+  - .
+
+allowBuilds:
+  keccak: true
+  secp256k1: true
+
+# 1inch's current SwapVM package depends on Aqua and forge-std from GitHub.
+# This repo pins those sources intentionally, so pnpm must allow those transitive
+# exotic dependencies when installing with pnpm 11+.
+blockExoticSubdeps: false

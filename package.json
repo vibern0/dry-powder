@@ -13,13 +13,19 @@
     "demo:setup": "hardhat run scripts/demo/setup.ts",
     "demo:quote": "hardhat run scripts/demo/quote.ts",
     "demo:fill": "hardhat run scripts/demo/fill.ts",
-    "demo:reprice": "hardhat run scripts/demo/reprice.ts"
+    "demo:reprice": "hardhat run scripts/demo/reprice.ts",
+    "deploy:sepolia": "hardhat run scripts/sepolia/deploy.ts --network sepolia",
+    "sepolia:setup": "hardhat run scripts/sepolia/setup.ts --network sepolia",
+    "sepolia:quote": "hardhat run scripts/sepolia/quote.ts --network sepolia",
+    "sepolia:fill": "hardhat run scripts/sepolia/fill.ts --network sepolia",
+    "sepolia:reprice": "hardhat run scripts/sepolia/reprice.ts --network sepolia"
   },
   "dependencies": {
     "@1inch/aqua": "https://github.com/1inch/aqua#6f05aa1ac2dcf701b0e086ad5e7606515f1fa454",
     "@1inch/solidity-utils": "6.9.7",
     "@1inch/swap-vm": "https://github.com/1inch/swap-vm#b44977a1c7744c9caa6b7974d9b638ed4983cfd3",
-    "@openzeppelin/contracts": "5.4.0"
+    "@openzeppelin/contracts": "5.4.0",
+    "dotenv": "16.4.5"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",

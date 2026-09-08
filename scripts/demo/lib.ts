@@ -1,5 +1,5 @@
 import { ethers } from "hardhat";
-import { BytesLike, Contract, Signer } from "ethers";
+import { BytesLike, Signer } from "ethers";
 
 interface OrderStruct {
   maker: string;
@@ -9,7 +9,7 @@ interface OrderStruct {
 
 interface DemoStrategy {
   symbol: string;
-  asset: Contract;
+  asset: any;
   assetAmount: bigint;
   reserveAmount: bigint;
   order: OrderStruct;
@@ -20,12 +20,12 @@ interface DemoEnvironment {
   owner: Signer;
   maker: Signer;
   taker: Signer;
-  aqua: Contract;
-  router: Contract;
-  mUSDC: Contract;
-  mETH: Contract;
-  mWBTC: Contract;
-  mLINK: Contract;
+  aqua: any;
+  router: any;
+  mUSDC: any;
+  mETH: any;
+  mWBTC: any;
+  mLINK: any;
   reserveId: string;
   strategies: {
     eth: DemoStrategy;
@@ -93,8 +93,8 @@ function buildExactOutTakerTraits(isAToB: boolean): string {
 async function buildStrategy(args: {
   maker: string;
   symbol: string;
-  asset: Contract;
-  reserveToken: Contract;
+  asset: any;
+  reserveToken: any;
   assetAmount: bigint;
   reserveAmount: bigint;
   salt: bigint;

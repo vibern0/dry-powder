@@ -3,12 +3,23 @@ import "@nomicfoundation/hardhat-chai-matchers";
 import "@typechain/hardhat";
 import "hardhat-dependency-compiler";
 import "hardhat-tracer";
+import "dotenv/config";
 import { HardhatUserConfig } from "hardhat/config";
 
 const config: HardhatUserConfig = {
   networks: {
     hardhat: {
       allowUnlimitedContractSize: true
+    },
+    sepolia: {
+      chainId: 11155111,
+      url: process.env.SEPOLIA_RPC_URL ?? "",
+      accounts: process.env.SEPOLIA_DEPLOYER_PRIVATE_KEY ? [process.env.SEPOLIA_DEPLOYER_PRIVATE_KEY] : []
+    },
+    base: {
+      chainId: 8453,
+      url: process.env.BASE_RPC_URL ?? "",
+      accounts: process.env.BASE_DEPLOYER_PRIVATE_KEY ? [process.env.BASE_DEPLOYER_PRIVATE_KEY] : []
     }
   },
   solidity: {

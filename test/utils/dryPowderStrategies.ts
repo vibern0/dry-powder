@@ -1,4 +1,4 @@
-import { Contract, ethers, Signer } from "ethers";
+import { ethers, Signer } from "ethers";
 import { buildAquaOrder, buildCustomInstruction, buildLimitProgram, buildTakerTraits, OrderStruct } from "./swapVm";
 
 const DRY_POWDER_OPCODE = 0x34;
@@ -60,8 +60,8 @@ export function buildDryPowderStrategy(args: {
 }
 
 export async function shipDryPowderStrategy(args: {
-  aqua: Contract;
-  router: Contract;
+  aqua: any;
+  router: any;
   maker: Signer;
   strategy: DryPowderStrategy;
 }) {
