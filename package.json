@@ -4,8 +4,8 @@
   "private": true,
   "license": "MIT",
   "scripts": {
-    "build": "npm run build -w @dry-powder/contracts",
-    "test": "npm run test -w @dry-powder/contracts",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
     "deploy:base": "npm run deploy:base -w @dry-powder/contracts",
     "demo": "npm run demo -w @dry-powder/contracts",
     "demo:setup": "npm run demo:setup -w @dry-powder/contracts",
@@ -16,7 +16,10 @@
     "sepolia:setup": "npm run sepolia:setup -w @dry-powder/contracts",
     "sepolia:quote": "npm run sepolia:quote -w @dry-powder/contracts",
     "sepolia:fill": "npm run sepolia:fill -w @dry-powder/contracts",
-    "sepolia:reprice": "npm run sepolia:reprice -w @dry-powder/contracts"
+    "sepolia:reprice": "npm run sepolia:reprice -w @dry-powder/contracts",
+    "web:dev": "npm run dev -w @dry-powder/web",
+    "web:build": "npm run build -w @dry-powder/web",
+    "web:test": "npm run test -w @dry-powder/web"
   },
   "workspaces": [
     "apps/*",
