@@ -188,25 +188,25 @@ DONE         Implemented, tested, and documented enough for the next phase.
 
 ## Phase 6: Demo Scripts
 
-**Status:** `TODO`
+**Status:** `DONE`
 
 **Purpose:** Create a repeatable demonstration for judging, recording, or local review.
 
 **Tasks:**
 
-- [ ] Add deploy script for local environment.
-- [ ] Add setup script for maker, tokens, approvals, reserve, legs, activation, and strategy shipping.
-- [ ] Add quote script showing all three initial strategy quotes.
-- [ ] Add fill script for one leg.
-- [ ] Add sibling repricing script showing ETH fill changes WBTC and LINK capacity/prices.
-- [ ] Add full demo script that runs the story end to end.
-- [ ] Print concise before/after reserve state after each fill.
+- [x] Add deploy script for local environment.
+- [x] Add setup script for maker, tokens, approvals, reserve, legs, activation, and strategy shipping.
+- [x] Add quote script showing all three initial strategy quotes.
+- [x] Add fill script for one leg.
+- [x] Add sibling repricing script showing ETH fill changes WBTC and LINK capacity/prices.
+- [x] Add full demo script that runs the story end to end.
+- [x] Print concise before/after reserve state after each fill.
 
 **Done Means:**
 
-- [ ] One command can run the local demo from clean deploy to sibling repricing.
-- [ ] Demo output clearly shows real token transfers.
-- [ ] Demo output clearly shows shared reserve spending and tranche movement.
+- [x] One command can run the local demo from clean deploy to sibling repricing.
+- [x] Demo output clearly shows real token transfers.
+- [x] Demo output clearly shows shared reserve spending and tranche movement.
 
 ---
 

@@ -8,7 +8,12 @@
     "precompile": "mkdir -p node_modules/forge-std contracts/hardhat-dependency-compiler && rsync -a node_modules/forge-std/src/ node_modules/forge-std/",
     "build": "npm run precompile && hardhat compile",
     "test": "npm run precompile && hardhat test",
-    "deploy:base": "hardhat run scripts/deploy-base.ts"
+    "deploy:base": "hardhat run scripts/deploy-base.ts",
+    "demo": "hardhat run scripts/demo/full.ts",
+    "demo:setup": "hardhat run scripts/demo/setup.ts",
+    "demo:quote": "hardhat run scripts/demo/quote.ts",
+    "demo:fill": "hardhat run scripts/demo/fill.ts",
+    "demo:reprice": "hardhat run scripts/demo/reprice.ts"
   },
   "dependencies": {
     "@1inch/aqua": "https://github.com/1inch/aqua#6f05aa1ac2dcf701b0e086ad5e7606515f1fa454",
