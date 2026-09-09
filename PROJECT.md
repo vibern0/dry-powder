@@ -330,11 +330,11 @@ Pseudo-architecture:
 
 ```solidity
 contract DryPowderRouter is
-    Simulator,
     SwapVM,
-    LimitOpcodes
+    LimitSwap,
+    DryPowder
 {
-    uint8 constant DRY_POWDER_OPCODE = 0x2e; // verify slot before use
+    uint8 constant DRY_POWDER_OPCODE = 0x34;
 
     function _dispatch(
         Context memory ctx,
@@ -343,16 +343,27 @@ contract DryPowderRouter is
     ) internal override {
         if (opcode == DRY_POWDER_OPCODE) {
             DryPowder.exec(ctx, args);
+        } else if (opcode == LIMIT_SWAP_OPCODE) {
+            LimitSwap.exec(ctx, args);
+        } else if (opcode == SALT_OPCODE) {
+            return;
         } else {
-            _runOpcode(ctx, opcode, args);
+            revert UnknownOpcode(opcode);
         }
     }
 }
 ```
 
-Do not blindly use `0x2e`.
+`DRY_POWDER_OPCODE = 0x34` is intentionally valid only for this narrow
+DryPowder router dispatch surface. It collides with opcode `52` in the
+official all-opcodes `SwapVMRouter`, so this custom router must remain
+separate from the universal opcode table.
 
-The current opcode table shows `0x2e` as unused, but this must be rechecked immediately before implementation because this is a live repository. citeturn714583view0
+Do not deploy the official all-opcodes `SwapVMRouter` for this project: it is
+too large for public-chain deployment under current compiler settings and mixes
+AMM and limit-order opcode groups that are conceptually incompatible. Use the
+official `AquaSwapVMRouter` for Aqua AMM strategies and a separate limit-order
+style router for Dry Powder.
 
 Alternatively add an explicit `DryPowder` enum entry in your fork's `OpcodeList`.
 

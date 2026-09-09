@@ -85,6 +85,7 @@ DONE         Implemented, tested, and documented enough for the next phase.
 - [x] Add a `DRY_POWDER_OPCODE` constant or explicit enum entry in the forked opcode list.
 - [x] Implement dispatch so Dry Powder handles only its opcode and delegates everything else to existing limit opcodes.
 - [x] Add tests proving non-Dry-Powder limit opcodes still work through the custom router.
+- [x] Keep Dry Powder on a separate limit-order-style router instead of the official all-opcodes `SwapVMRouter`; use `AquaSwapVMRouter` only for Aqua AMM opcode deployments.
 
 **Done Means:**
 
