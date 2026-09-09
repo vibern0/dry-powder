@@ -16,7 +16,7 @@ import {
 } from "viem";
 import { sepolia } from "viem/chains";
 import { AQUA_ADDRESS, DRY_POWDER_ROUTER, MOCK_ERC20_ABI, ROUTER_ABI, SEPOLIA_CHAIN_ID, TOKENS } from "./constants";
-import { buildSetupPlan, buildStrategy, createReserveId, strategyInputs, usdc, type LegKey } from "./strategy";
+import { buildFillIntent, buildSetupPlan, buildStrategy, createReserveId, strategyInputs, usdc, type LegKey } from "./strategy";
 import { assertHasSepoliaGas, formatEthBalance } from "./strategy";
 
 export type StepKey =
@@ -29,7 +29,7 @@ export type StepKey =
   | "shipStrategies"
   | "removeStrategies"
   | "quote"
-  | "fillEth";
+  | "fill";
 
 export type WalletState = {
   account: Address;
@@ -285,24 +285,20 @@ export async function quoteStrategies(maker: Address, reserveId: Hex) {
   return quotes;
 }
 
-export async function executeEthFill(account: Address, reserveId: Hex, onUpdate: SendUpdate) {
-  await executeEthFillForMaker(account, account, reserveId, onUpdate);
-}
-
-export async function executeEthFillForMaker(taker: Address, maker: Address, reserveId: Hex, onUpdate: SendUpdate) {
-  await approveToken(taker, TOKENS.mETH, DRY_POWDER_ROUTER, "fillEth", "Approving taker mETH for router", onUpdate);
+export async function executeFillForMaker(taker: Address, maker: Address, reserveId: Hex, key: LegKey, reserveAmount: string, onUpdate: SendUpdate) {
+  const fill = buildFillIntent(key, maker, reserveId, reserveAmount);
+  await approveToken(taker, fill.approvalToken, DRY_POWDER_ROUTER, "fill", `Approving taker m${fill.label} for router`, onUpdate);
 
   const { publicClient, walletClient } = makeClients(taker);
-  const strategy = buildStrategy("eth", maker, reserveId);
   const hash = await walletClient.writeContract({
     account: taker,
     chain: sepolia,
     address: DRY_POWDER_ROUTER,
     abi: ROUTER_ABI,
     functionName: "swap",
-    args: [strategy.order, usdc("4000"), strategy.exactOutTraits]
+    args: [fill.order, fill.fillAmount, fill.exactOutTraits]
   });
-  onUpdate({ step: "fillEth", message: "Executing ETH fill", hash });
+  onUpdate({ step: "fill", message: fill.message, hash });
   await publicClient.waitForTransactionReceipt({ hash });
 }
 

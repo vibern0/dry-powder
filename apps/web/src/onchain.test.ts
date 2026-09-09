@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { encodeAbiParameters, keccak256, parseUnits } from "viem";
 import { AQUA_ADDRESS, DRY_POWDER_ROUTER, TOKENS } from "./onchain/constants";
-import { assertHasSepoliaGas, buildSetupPlan, buildStrategy, createReserveId, formatEthBalance, roleForAccount, usdc } from "./onchain/strategy";
+import { assertHasSepoliaGas, buildFillIntent, buildSetupPlan, buildStrategy, createReserveId, formatEthBalance, roleForAccount, usdc } from "./onchain/strategy";
 
 describe("onchain strategy helpers", () => {
   it("creates deterministic reserve ids from maker and nonce", () => {
@@ -44,6 +44,22 @@ describe("onchain strategy helpers", () => {
 
     expect(strategy.order.maker).toBe(maker);
     expect(strategy.order.maker).not.toBe(taker);
+  });
+
+  it("builds a fill intent for any shipped strategy", () => {
+    const maker = "0x000000000000000000000000000000000000dEaD";
+    const reserveId = createReserveId(maker, "demo-1");
+
+    const ethFill = buildFillIntent("eth", maker, reserveId, "123");
+    const wbtcFill = buildFillIntent("wbtc", maker, reserveId, "456");
+    const linkFill = buildFillIntent("link", maker, reserveId, "789");
+
+    expect(ethFill.approvalToken).toBe(TOKENS.mETH);
+    expect(wbtcFill.approvalToken).toBe(TOKENS.mWBTC);
+    expect(linkFill.approvalToken).toBe(TOKENS.mLINK);
+    expect(wbtcFill.order.maker).toBe(maker);
+    expect(wbtcFill.fillAmount).toBe(usdc("456"));
+    expect(linkFill.message).toBe("Executing LINK fill");
   });
 
   it("classifies connected accounts relative to the selected maker", () => {

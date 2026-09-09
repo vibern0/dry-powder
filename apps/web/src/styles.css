@@ -40,9 +40,9 @@ button {
 
 .brand-lockup,
 .nav-links,
+.nav-actions,
 .connect-preview,
 .kicker,
-.story-actions,
 .reserve-header,
 .panel-title,
 .step-row,
@@ -82,18 +82,27 @@ button {
   font-size: 14px;
 }
 
-.nav-links span {
+.nav-links button {
   padding: 10px 14px;
+  border: 0;
   border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
 .selected-pill {
-  background: #2a2a31;
+  background: #2a2a31 !important;
   color: #ffffff;
 }
 
-.connect-preview {
+.nav-actions {
   justify-self: end;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.connect-preview {
   justify-content: center;
   min-width: 148px;
   height: 42px;
@@ -177,13 +186,6 @@ h1 {
   color: #c9cad4;
   font-size: 18px;
   line-height: 1.55;
-}
-
-.story-actions {
-  position: relative;
-  z-index: 1;
-  gap: 10px;
-  margin-top: 34px;
 }
 
 .primary-action,
@@ -397,7 +399,9 @@ h1 {
 
 .step-row:not(:disabled):hover,
 .secondary-action:not(:disabled):hover,
-.wide-action:not(:disabled):hover {
+.wide-action:not(:disabled):hover,
+.select-input:not(:disabled):hover,
+.text-input:not(:disabled):hover {
   background: #22242b;
 }
 
@@ -412,6 +416,36 @@ h1 {
   color: #6cf6b1;
   font-size: 22px;
   line-height: 1;
+}
+
+.primary-step {
+  background: #ffffff;
+  color: #08090a;
+  font-weight: 800;
+}
+
+.primary-step .step-icon {
+  background: #1012ff;
+  color: #ffffff;
+}
+
+.field-label {
+  margin: 4px 0 -4px;
+  color: #8f93a1;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.select-input,
+.text-input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #252730;
+  border-radius: 8px;
+  background: #18191f;
+  color: #ffffff;
+  font: inherit;
 }
 
 .wide-action,
@@ -694,8 +728,14 @@ h1 {
   }
 
   .nav-links,
+  .nav-actions,
   .connect-preview {
     justify-self: stretch;
+  }
+
+  .nav-actions {
+    display: grid;
+    grid-template-columns: 46px minmax(0, 1fr);
   }
 
   .connect-preview {

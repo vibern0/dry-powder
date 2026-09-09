@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Coins, Droplets, ExternalLink, Gauge, Play, RotateCcw, Trash2, Wallet } from "lucide-react";
+import { ArrowRight, Check, Coins, Droplets, ExternalLink, Gauge, RotateCcw, Trash2, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
 import { formatUsd, initialDemo, selectTranche, summarizeReserve, type DemoState, type Leg, type LegKey } from "./demoModel";
 import {
@@ -8,7 +8,7 @@ import {
   connectWallet,
   createFreshMakerSession,
   createReserveBatch,
-  executeEthFillForMaker,
+  executeFillForMaker,
   getOrCreateMakerSession,
   hasInjectedWallet,
   mintMakerReserveTokens,
@@ -25,7 +25,9 @@ import {
   type WalletState
 } from "./onchain/client";
 import { SEPOLIA_CHAIN_ID } from "./onchain/constants";
-import { roleForAccount } from "./onchain/strategy";
+import { roleForAccount, strategyInputs } from "./onchain/strategy";
+
+type DemoPage = "maker" | "taker";
 
 const setupSteps: Array<{ key: StepKey; label: string }> = [
   { key: "mint", label: "Mint maker mUSDC" },
@@ -50,6 +52,9 @@ export function App() {
   const [pending, setPending] = useState<StepKey | "connect" | "switch" | "refresh" | null>(null);
   const [eventLog, setEventLog] = useState<TransactionUpdate[]>([]);
   const [quotes, setQuotes] = useState<Record<LegKey, string> | null>(null);
+  const [page, setPage] = useState<DemoPage>("maker");
+  const [fillAsset, setFillAsset] = useState<LegKey>("eth");
+  const [fillAmount, setFillAmount] = useState("4000");
   const [error, setError] = useState<string | null>(null);
   const reserveCreated = Boolean(completed.createReserve);
   const strategiesShipped = Boolean(completed.shipStrategies) && !completed.removeStrategies;
@@ -69,6 +74,14 @@ export function App() {
       if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(session);
       setEventLog([{ step: "quote", message: `Wallet connected as ${roleForAccount(next.account, session.maker)}: ${shortAddress(next.account)}` }]);
     });
+  }
+
+  function disconnect() {
+    setWallet(null);
+    setQuotes(null);
+    setError(null);
+    setPending(null);
+    setEventLog([{ step: "quote", message: "Wallet disconnected locally. Maker session preserved." }]);
   }
 
   async function switchNetwork() {
@@ -133,16 +146,16 @@ export function App() {
       removeStrategies: async () => {
         await removeStrategies(wallet.account, makerSession.reserveId, pushEvent);
         setQuotes(null);
-        setCompleted((previous) => ({ ...previous, shipStrategies: false, removeStrategies: true, fillEth: false }));
+        setCompleted((previous) => ({ ...previous, shipStrategies: false, removeStrategies: true, fill: false }));
       },
       quote: async () => {
         const nextQuotes = await quoteStrategies(makerSession.maker, makerSession.reserveId);
         setQuotes(Object.fromEntries(nextQuotes.map((quote) => [quote.key, quote.label])) as Record<LegKey, string>);
         pushEvent({ step: "quote", message: "Quotes refreshed from DryPowderRouter." });
       },
-      fillEth: async () => {
-        await executeEthFillForMaker(wallet.account, makerSession.maker, makerSession.reserveId, pushEvent);
-        setCompleted((previous) => ({ ...previous, fillEth: true }));
+      fill: async () => {
+        await executeFillForMaker(wallet.account, makerSession.maker, makerSession.reserveId, fillAsset, fillAmount, pushEvent);
+        setCompleted((previous) => ({ ...previous, fill: true }));
         await refresh();
       }
     };
@@ -178,7 +191,16 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <TopNav wallet={wallet} pending={pending} onConnect={connect} />
+      <TopNav
+        wallet={wallet}
+        pending={pending}
+        page={page}
+        canResetReserve={Boolean(wallet) && isMakerRole && pending === null}
+        onPageChange={setPage}
+        onResetReserve={rotateReserve}
+        onConnect={connect}
+        onDisconnect={disconnect}
+      />
 
       <section className="hero-grid">
         <div className="story-panel">
@@ -192,15 +214,6 @@ export function App() {
             opportunity deserves scarce mUSDC next.
           </p>
 
-          <div className="story-actions">
-            <button className="primary-action" onClick={() => runSetupStep("fillEth")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || !strategiesShipped || pending !== null}>
-              <Play size={18} />
-              {completed.fillEth ? "ETH fill complete" : "Execute ETH fill"}
-            </button>
-            <button className="icon-action" onClick={rotateReserve} aria-label="Create fresh reserve id" disabled={!wallet || !isMakerRole || pending !== null}>
-              <RotateCcw size={18} />
-            </button>
-          </div>
           {error ? <div className="error-banner">{error}</div> : null}
         </div>
 
@@ -209,7 +222,7 @@ export function App() {
 
       <section className="workspace-grid">
         <div className="setup-column">
-          <PanelTitle icon={<Wallet size={18} />} title="Setup Flow" />
+          <PanelTitle icon={<Wallet size={18} />} title={page === "maker" ? "Maker Page" : "Taker Page"} />
           {!wallet ? (
             <button className="wide-action" onClick={connect} disabled={!hasInjectedWallet() || pending !== null}>
               {pending === "connect" ? "Connecting..." : hasInjectedWallet() ? "Connect wallet" : "No wallet found"}
@@ -224,16 +237,41 @@ export function App() {
             </div>
           )}
           <RolePanel wallet={wallet} makerSession={makerSession} onSync={connect} onUseAsMaker={setConnectedAsMaker} pending={pending} />
-          <div className="step-list">
-            {setupSteps.map((step) => (
-              <button className="step-row" key={step.key} onClick={() => runSetupStep(step.key)} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || pending !== null || isStepDisabled(step.key, completed)}>
-                <span className="step-icon">
-                  {completed[step.key] ? <Check size={14} /> : pending === step.key ? "·" : ""}
-                </span>
-                <span>{pending === step.key ? "Confirm in wallet..." : step.label}</span>
+          {page === "maker" ? (
+            <div className="step-list">
+              {setupSteps.map((step) => (
+                <button className="step-row" key={step.key} onClick={() => runSetupStep(step.key)} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || pending !== null || isStepDisabled(step.key, completed)}>
+                  <span className="step-icon">
+                    {completed[step.key] ? <Check size={14} /> : pending === step.key ? "·" : ""}
+                  </span>
+                  <span>{pending === step.key ? "Confirm in wallet..." : step.label}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="step-list">
+              <button className="step-row" onClick={() => runSetupStep("mintTaker")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || pending !== null}>
+                <span className="step-icon">{completed.mintTaker ? <Check size={14} /> : pending === "mintTaker" ? "·" : ""}</span>
+                <span>{pending === "mintTaker" ? "Confirm in wallet..." : "Mint taker assets"}</span>
               </button>
-            ))}
-          </div>
+              <label className="field-label" htmlFor="fill-asset">Fill asset</label>
+              <select id="fill-asset" className="select-input" value={fillAsset} onChange={(event) => setFillAsset(event.target.value as LegKey)}>
+                {(Object.keys(strategyInputs) as LegKey[]).map((key) => (
+                  <option value={key} key={key}>{strategyInputs[key].label}</option>
+                ))}
+              </select>
+              <label className="field-label" htmlFor="fill-amount">mUSDC amount</label>
+              <input id="fill-amount" className="text-input" value={fillAmount} onChange={(event) => setFillAmount(event.target.value)} inputMode="decimal" />
+              <button className="step-row" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesShipped || pending !== null}>
+                <span className="step-icon">{pending === "quote" ? "·" : ""}</span>
+                <span>{pending === "quote" ? "Confirm in wallet..." : "Quote all strategies"}</span>
+              </button>
+              <button className="step-row primary-step" onClick={() => runSetupStep("fill")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || !strategiesShipped || pending !== null || !fillAmount}>
+                <span className="step-icon">{completed.fill ? <Check size={14} /> : pending === "fill" ? "·" : ""}</span>
+                <span>{pending === "fill" ? "Confirm in wallet..." : `Execute ${strategyInputs[fillAsset].label} fill`}</span>
+              </button>
+            </div>
+          )}
 
           <div className="network-card">
             {txRows.map(([label, value]) => (
@@ -252,24 +290,23 @@ export function App() {
         <div className="legs-column">
           <PanelTitle icon={<Coins size={18} />} title="Aqua Strategies" />
           <div className="strategy-actions">
-            <button className="secondary-action" onClick={() => runSetupStep("mintTaker")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || pending !== null}>
-              {pending === "mintTaker" ? "Minting..." : "Mint taker assets"}
-            </button>
             <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesShipped || pending !== null}>
               {pending === "quote" ? "Quoting..." : "Quote all"}
             </button>
             <button className="secondary-action" onClick={refresh} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
               {pending === "refresh" ? "Refreshing..." : "Refresh"}
             </button>
-            <button className="secondary-action danger" onClick={() => runSetupStep("removeStrategies")} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || !strategiesShipped || pending !== null}>
-              <Trash2 size={15} />
-              Remove
-            </button>
+            {page === "maker" ? (
+              <button className="secondary-action danger" onClick={() => runSetupStep("removeStrategies")} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || !strategiesShipped || pending !== null}>
+                <Trash2 size={15} />
+                Remove
+              </button>
+            ) : null}
           </div>
           {strategiesShipped ? (
             <div className="leg-grid">
               {visibleState.legs.map((leg) => (
-              <LegCard key={leg.key} leg={leg} quote={quotes?.[leg.key]} active={leg.key === "eth" && Boolean(completed.fillEth)} />
+                <LegCard key={leg.key} leg={leg} quote={quotes?.[leg.key]} active={leg.key === fillAsset && Boolean(completed.fill)} />
               ))}
             </div>
           ) : (
@@ -303,11 +340,21 @@ export function App() {
 function TopNav({
   wallet,
   pending,
-  onConnect
+  page,
+  canResetReserve,
+  onPageChange,
+  onResetReserve,
+  onConnect,
+  onDisconnect
 }: {
   wallet: WalletState | null;
   pending: StepKey | "connect" | "switch" | "refresh" | null;
+  page: DemoPage;
+  canResetReserve: boolean;
+  onPageChange: (page: DemoPage) => void;
+  onResetReserve: () => void;
   onConnect: () => void;
+  onDisconnect: () => void;
 }) {
   return (
     <nav className="top-nav">
@@ -315,14 +362,18 @@ function TopNav({
         <div className="brand-mark">DP</div>
         <span>Dry Powder</span>
       </div>
-      <div className="nav-links" aria-label="Demo sections">
-        <span className="selected-pill">Aqua demo</span>
-        <span>Reserve</span>
-        <span>Strategies</span>
+      <div className="nav-links" aria-label="Demo pages">
+        <button className={page === "maker" ? "selected-pill" : ""} onClick={() => onPageChange("maker")}>Maker</button>
+        <button className={page === "taker" ? "selected-pill" : ""} onClick={() => onPageChange("taker")}>Taker</button>
       </div>
-      <button className="connect-preview" onClick={onConnect} disabled={Boolean(wallet) || pending !== null || !hasInjectedWallet()}>
-        {wallet ? shortAddress(wallet.account) : pending === "connect" ? "Connecting..." : "Connect wallet"}
-      </button>
+      <div className="nav-actions">
+        <button className="icon-action" onClick={onResetReserve} aria-label="Create fresh reserve id" title="Create fresh reserve id" disabled={!canResetReserve}>
+          <RotateCcw size={18} />
+        </button>
+        <button className="connect-preview" onClick={wallet ? onDisconnect : onConnect} disabled={pending !== null || (!wallet && !hasInjectedWallet())}>
+          {wallet ? `Disconnect ${shortAddress(wallet.account)}` : pending === "connect" ? "Connecting..." : "Connect wallet"}
+        </button>
+      </div>
     </nav>
   );
 }
@@ -344,7 +395,7 @@ function RolePanel({
     return (
       <div className="role-panel">
         <span>Maker</span>
-        <strong>Connect the maker wallet first.</strong>
+        <strong>{makerSession ? `${shortAddress(makerSession.maker)} preserved` : "Connect the maker wallet first."}</strong>
       </div>
     );
   }

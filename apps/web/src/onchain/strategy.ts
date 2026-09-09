@@ -53,6 +53,16 @@ export type BuiltStrategy = {
   shipAmounts: bigint[];
 };
 
+export type FillIntent = {
+  key: LegKey;
+  label: string;
+  approvalToken: Address;
+  order: Order;
+  exactOutTraits: Hex;
+  fillAmount: bigint;
+  message: string;
+};
+
 export const strategyInputs: Record<LegKey, StrategyInput> = {
   eth: {
     key: "eth",
@@ -148,6 +158,20 @@ export function buildStrategy(key: LegKey, maker: Address, reserveId: Hex): Buil
     strategyHash: keccak256(strategyBytes),
     shipTokens: [TOKENS.mUSDC, input.asset],
     shipAmounts: [input.reserveAmount, input.assetAmount]
+  };
+}
+
+export function buildFillIntent(key: LegKey, maker: Address, reserveId: Hex, reserveAmount: string): FillIntent {
+  const strategy = buildStrategy(key, maker, reserveId);
+
+  return {
+    key,
+    label: strategy.input.label,
+    approvalToken: strategy.input.asset,
+    order: strategy.order,
+    exactOutTraits: strategy.exactOutTraits,
+    fillAmount: usdc(reserveAmount),
+    message: `Executing ${strategy.input.label} fill`
   };
 }
 
