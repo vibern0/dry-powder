@@ -169,6 +169,13 @@ export function buildSetupPlan(maker: Address, reserveId: Hex) {
           amount: strategy.shipAmounts[index]
         }))
       })
+    ),
+    dockTransactions: strategies.map((strategy) =>
+      aqua.dock({
+        app: new OneInchAddress(DRY_POWDER_ROUTER),
+        strategyHash: new HexString(strategy.strategyHash),
+        tokens: strategy.shipTokens.map((token) => new OneInchAddress(token))
+      })
     )
   };
 }

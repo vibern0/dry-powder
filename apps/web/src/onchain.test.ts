@@ -47,6 +47,17 @@ describe("onchain strategy helpers", () => {
     expect(plan.reserveThresholds).toEqual([usdc("4000"), usdc("7500"), usdc("10000")]);
   });
 
+  it("uses the Aqua SDK to build dock transactions for strategy removal", () => {
+    const reserveId = createReserveId("0x000000000000000000000000000000000000dEaD", "demo-1");
+    const plan = buildSetupPlan("0x000000000000000000000000000000000000dEaD", reserveId);
+
+    expect(plan.dockTransactions).toHaveLength(3);
+    expect(plan.dockTransactions[0].to).toBe(AQUA_ADDRESS);
+    expect(plan.dockTransactions[0].value).toBe(0n);
+    expect(plan.dockTransactions[0].data.startsWith("0x28defc17")).toBe(true);
+    expect(plan.dockTransactions[0].data).toContain(plan.strategies[0].strategyHash.slice(2));
+  });
+
   it("formats and guards Sepolia gas balance before transactions", () => {
     expect(formatEthBalance(123456789000000000n)).toBe("0.123456 ETH");
     expect(() => assertHasSepoliaGas(0n)).toThrow("Connected Sepolia account has 0 ETH");

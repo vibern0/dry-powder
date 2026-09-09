@@ -1,3 +1,4 @@
+import { ABI } from "@1inch/aqua-sdk";
 import {
   createPublicClient,
   createWalletClient,
@@ -18,7 +19,7 @@ import { AQUA_ADDRESS, DRY_POWDER_ROUTER, MOCK_ERC20_ABI, ROUTER_ABI, SEPOLIA_CH
 import { buildSetupPlan, buildStrategy, createReserveId, strategyInputs, usdc, type LegKey } from "./strategy";
 import { assertHasSepoliaGas, formatEthBalance } from "./strategy";
 
-export type StepKey = "mint" | "approveAqua" | "createReserve" | "addLegs" | "activateReserve" | "shipStrategies" | "quote" | "fillEth";
+export type StepKey = "mint" | "approveAqua" | "createReserve" | "addLegs" | "activateReserve" | "shipStrategies" | "removeStrategies" | "quote" | "fillEth";
 
 export type WalletState = {
   account: Address;
@@ -169,6 +170,12 @@ export async function activateReserve(account: Address, reserveId: Hex, onUpdate
   await publicClient.waitForTransactionReceipt({ hash });
 }
 
+export async function createReserveBatch(account: Address, reserveId: Hex, onUpdate: SendUpdate) {
+  await createReserve(account, reserveId, onUpdate);
+  await addLegs(account, reserveId, onUpdate);
+  await activateReserve(account, reserveId, onUpdate);
+}
+
 export async function shipStrategies(account: Address, reserveId: Hex, onUpdate: SendUpdate) {
   const { publicClient, walletClient } = makeClients(account);
   assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
@@ -182,6 +189,23 @@ export async function shipStrategies(account: Address, reserveId: Hex, onUpdate:
       value: transaction.value
     });
     onUpdate({ step: "shipStrategies", message: `Shipping Aqua strategy ${index + 1} of 3`, hash });
+    await publicClient.waitForTransactionReceipt({ hash });
+  }
+}
+
+export async function removeStrategies(account: Address, reserveId: Hex, onUpdate: SendUpdate) {
+  const { publicClient, walletClient } = makeClients(account);
+  assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
+  const plan = buildSetupPlan(account, reserveId);
+  for (const [index, transaction] of plan.dockTransactions.entries()) {
+    const hash = await walletClient.sendTransaction({
+      account,
+      chain: sepolia,
+      to: transaction.to,
+      data: transaction.data,
+      value: transaction.value
+    });
+    onUpdate({ step: "removeStrategies", message: `Removing Aqua strategy ${index + 1} of 3`, hash });
     await publicClient.waitForTransactionReceipt({ hash });
   }
 }
@@ -257,11 +281,13 @@ export async function readOnchainSnapshot(account: Address, reserveId: Hex) {
       })
     )
   );
+  const shipped = await areStrategiesShipped(publicClient, account, reserveId);
 
   return {
     reserve,
     legs: { eth: ethLeg, wbtc: wbtcLeg, link: linkLeg },
-    balances: { mUSDC, mETH, mWBTC, mLINK }
+    balances: { mUSDC, mETH, mWBTC, mLINK },
+    shipped
   };
 }
 
@@ -309,6 +335,22 @@ function getOrCreateReserveId(account: Address): Hex {
   if (existing?.startsWith("0x") && existing.length === 66) return existing as Hex;
 
   return createFreshWalletReserve(account);
+}
+
+async function areStrategiesShipped(publicClient: PublicClient, account: Address, reserveId: Hex) {
+  const strategies = (["eth", "wbtc", "link"] as const).map((key) => buildStrategy(key, account, reserveId));
+  const balances = await Promise.all(
+    strategies.map((strategy) =>
+      publicClient.readContract({
+        address: AQUA_ADDRESS,
+        abi: ABI.AQUA_ABI,
+        functionName: "rawBalances",
+        args: [account, DRY_POWDER_ROUTER, strategy.strategyHash, TOKENS.mUSDC]
+      })
+    )
+  );
+
+  return balances.every(([, tokensCount]) => tokensCount > 0 && tokensCount !== 255);
 }
 
 function reserveStorageKey(account: Address) {

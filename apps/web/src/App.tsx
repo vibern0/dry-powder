@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Coins, Droplets, ExternalLink, Gauge, Play, RotateCcw, Wallet } from "lucide-react";
+import { ArrowRight, Check, Coins, Droplets, ExternalLink, Gauge, Play, RotateCcw, Trash2, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
 import { formatUsd, initialDemo, selectTranche, summarizeReserve, type DemoState, type Leg, type LegKey } from "./demoModel";
 import {
@@ -7,12 +7,13 @@ import {
   approveAqua,
   connectWallet,
   createFreshWalletReserve,
-  createReserve,
+  createReserveBatch,
   executeEthFill,
   hasInjectedWallet,
   mintMockTokens,
   quoteStrategies,
   readOnchainSnapshot,
+  removeStrategies,
   shipStrategies,
   switchToSepolia,
   type StepKey,
@@ -25,9 +26,8 @@ const setupSteps: Array<{ key: StepKey; label: string }> = [
   { key: "mint", label: "Mint mock tokens" },
   { key: "approveAqua", label: "Approve Aqua" },
   { key: "createReserve", label: "Create reserve" },
-  { key: "addLegs", label: "Add legs" },
-  { key: "activateReserve", label: "Activate" },
-  { key: "shipStrategies", label: "Ship strategies" }
+  { key: "shipStrategies", label: "Ship strategies" },
+  { key: "removeStrategies", label: "Remove strategies" }
 ];
 
 const txRows = [
@@ -45,7 +45,10 @@ export function App() {
   const [eventLog, setEventLog] = useState<TransactionUpdate[]>([]);
   const [quotes, setQuotes] = useState<Record<LegKey, string> | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const summary = useMemo(() => summarizeReserve(state), [state]);
+  const reserveCreated = Boolean(completed.createReserve);
+  const strategiesShipped = Boolean(completed.shipStrategies) && !completed.removeStrategies;
+  const visibleState = strategiesShipped ? state : { ...state, legs: [] };
+  const summary = useMemo(() => summarizeReserve(visibleState), [visibleState]);
   const tranche = selectTranche(state.reserve);
   const wrongNetwork = wallet && wallet.chainId !== SEPOLIA_CHAIN_ID;
 
@@ -53,6 +56,7 @@ export function App() {
     await run("connect", async () => {
       const next = await connectWallet();
       setWallet(next);
+      if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(next);
       setEventLog([{ step: "quote", message: `Wallet connected: ${shortAddress(next.account)}` }]);
     });
   }
@@ -62,6 +66,7 @@ export function App() {
       await switchToSepolia();
       const next = await connectWallet();
       setWallet(next);
+      if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(next);
     });
   }
 
@@ -78,9 +83,19 @@ export function App() {
   async function refresh() {
     if (!wallet) return;
     await run("refresh", async () => {
-      const snapshot = await readOnchainSnapshot(wallet.account, wallet.reserveId);
-      setState(applySnapshot(snapshot.reserve.spent, snapshot.legs));
+      await loadSnapshot(wallet);
     });
+  }
+
+  async function loadSnapshot(target: WalletState) {
+    const snapshot = await readOnchainSnapshot(target.account, target.reserveId);
+    setState(applySnapshot(snapshot.reserve.spent, snapshot.legs));
+    setCompleted((previous) => ({
+      ...previous,
+      createReserve: snapshot.reserve.exists,
+      shipStrategies: snapshot.shipped,
+      removeStrategies: snapshot.shipped ? false : previous.removeStrategies
+    }));
   }
 
   async function runSetupStep(step: StepKey) {
@@ -88,10 +103,15 @@ export function App() {
     const actions: Record<StepKey, () => Promise<void>> = {
       mint: () => mintMockTokens(wallet.account, pushEvent),
       approveAqua: () => approveAqua(wallet.account, pushEvent),
-      createReserve: () => createReserve(wallet.account, wallet.reserveId, pushEvent),
+      createReserve: () => createReserveBatch(wallet.account, wallet.reserveId, pushEvent),
       addLegs: () => addLegs(wallet.account, wallet.reserveId, pushEvent),
       activateReserve: () => activateReserve(wallet.account, wallet.reserveId, pushEvent),
       shipStrategies: () => shipStrategies(wallet.account, wallet.reserveId, pushEvent),
+      removeStrategies: async () => {
+        await removeStrategies(wallet.account, wallet.reserveId, pushEvent);
+        setQuotes(null);
+        setCompleted((previous) => ({ ...previous, shipStrategies: false, removeStrategies: true, fillEth: false }));
+      },
       quote: async () => {
         const nextQuotes = await quoteStrategies(wallet.account, wallet.reserveId);
         setQuotes(Object.fromEntries(nextQuotes.map((quote) => [quote.key, quote.label])) as Record<LegKey, string>);
@@ -106,7 +126,11 @@ export function App() {
 
     await run(step, async () => {
       await actions[step]();
-      setCompleted((previous) => ({ ...previous, [step]: true }));
+      setCompleted((previous) => ({
+        ...previous,
+        [step]: true,
+        ...(step === "shipStrategies" ? { removeStrategies: false } : null)
+      }));
     });
   }
 
@@ -143,7 +167,7 @@ export function App() {
           </p>
 
           <div className="story-actions">
-            <button className="primary-action" onClick={() => runSetupStep("fillEth")} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
+            <button className="primary-action" onClick={() => runSetupStep("fillEth")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesShipped || pending !== null}>
               <Play size={18} />
               {completed.fillEth ? "ETH fill complete" : "Execute ETH fill"}
             </button>
@@ -154,7 +178,7 @@ export function App() {
           {error ? <div className="error-banner">{error}</div> : null}
         </div>
 
-        <ReserveCard summary={summary} tranche={tranche} />
+        <ReserveCard summary={summary} tranche={tranche} active={Boolean(wallet) && reserveCreated} />
       </section>
 
       <section className="workspace-grid">
@@ -175,7 +199,7 @@ export function App() {
           )}
           <div className="step-list">
             {setupSteps.map((step) => (
-              <button className="step-row" key={step.key} onClick={() => runSetupStep(step.key)} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
+              <button className="step-row" key={step.key} onClick={() => runSetupStep(step.key)} disabled={!wallet || Boolean(wrongNetwork) || pending !== null || isStepDisabled(step.key, completed)}>
                 <span className="step-icon">
                   {completed[step.key] ? <Check size={14} /> : pending === step.key ? "·" : ""}
                 </span>
@@ -201,24 +225,35 @@ export function App() {
         <div className="legs-column">
           <PanelTitle icon={<Coins size={18} />} title="Aqua Strategies" />
           <div className="strategy-actions">
-            <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
+            <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesShipped || pending !== null}>
               {pending === "quote" ? "Quoting..." : "Quote all"}
             </button>
             <button className="secondary-action" onClick={refresh} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
               {pending === "refresh" ? "Refreshing..." : "Refresh"}
             </button>
+            <button className="secondary-action danger" onClick={() => runSetupStep("removeStrategies")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesShipped || pending !== null}>
+              <Trash2 size={15} />
+              Remove
+            </button>
           </div>
-          <div className="leg-grid">
-            {state.legs.map((leg) => (
+          {strategiesShipped ? (
+            <div className="leg-grid">
+              {visibleState.legs.map((leg) => (
               <LegCard key={leg.key} leg={leg} quote={quotes?.[leg.key]} active={leg.key === "eth" && Boolean(completed.fillEth)} />
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyPanel
+              title={reserveCreated ? "No Aqua strategies shipped" : "No reserve strategies yet"}
+              detail={reserveCreated ? "Ship the batch when you are ready to quote and fill." : "Create a reserve first, then ship ETH, WBTC, and LINK strategies."}
+            />
+          )}
         </div>
 
         <div className="events-column">
           <PanelTitle icon={<Gauge size={18} />} title="Quote Story" />
           <div className="event-list">
-            {(eventLog.length ? eventLog.map(formatEvent) : state.eventLog).map((event) => (
+            {(eventLog.length ? eventLog.map(formatEvent) : ["Connect wallet to begin the live Sepolia demo."]).map((event) => (
               <div className="event-row" key={event}>
                 <ArrowRight size={15} />
                 <span>{event}</span>
@@ -227,8 +262,7 @@ export function App() {
           </div>
           <div className="next-card">
             <span>Integration</span>
-            <strong>viem wallet writes, DryPowderRouter reads, Aqua SDK ship calldata.</strong>
-            <ExternalLink size={16} />
+            <strong>viem wallet writes, DryPowderRouter reads, Aqua SDK ship and dock calldata.</strong>
           </div>
         </div>
       </section>
@@ -279,7 +313,41 @@ function applySnapshot(spent: bigint, legs: { eth: { spent: bigint }; wbtc: { sp
   };
 }
 
-function ReserveCard({ summary, tranche }: { summary: ReturnType<typeof summarizeReserve>; tranche: ReturnType<typeof selectTranche> }) {
+function ReserveCard({ summary, tranche, active }: { summary: ReturnType<typeof summarizeReserve>; tranche: ReturnType<typeof selectTranche>; active: boolean }) {
+  if (!active) {
+    return (
+      <div className="reserve-card empty-reserve">
+        <div className="reserve-header">
+          <span>Reserve overview</span>
+          <strong>Empty</strong>
+        </div>
+        <div className="reserve-main">
+          <span>--</span>
+          <small>No reserve created for this wallet session.</small>
+        </div>
+        <div className="reserve-bar empty" aria-label="Reserve utilization" />
+        <div className="reserve-stats">
+          <div>
+            <span>Remaining</span>
+            <strong>--</strong>
+          </div>
+          <div>
+            <span>Virtual caps</span>
+            <strong>--</strong>
+          </div>
+          <div>
+            <span>Overcommit</span>
+            <strong>--</strong>
+          </div>
+          <div>
+            <span>Active price</span>
+            <strong>--</strong>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const spentPercent = (summary.spent / summary.totalBudget) * 100;
   const remainingPercent = 100 - spentPercent;
 
@@ -319,6 +387,23 @@ function ReserveCard({ summary, tranche }: { summary: ReturnType<typeof summariz
       <div className="remaining-band" style={{ width: `${remainingPercent}%` }} />
     </div>
   );
+}
+
+function EmptyPanel({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="empty-panel">
+      <Coins size={22} />
+      <strong>{title}</strong>
+      <span>{detail}</span>
+    </div>
+  );
+}
+
+function isStepDisabled(step: StepKey, completed: Partial<Record<StepKey, boolean>>) {
+  if (step === "createReserve") return Boolean(completed.createReserve);
+  if (step === "shipStrategies") return !completed.createReserve || Boolean(completed.shipStrategies);
+  if (step === "removeStrategies") return !completed.shipStrategies || Boolean(completed.removeStrategies);
+  return false;
 }
 
 function LegCard({ leg, quote, active }: { leg: Leg; quote?: string; active: boolean }) {
