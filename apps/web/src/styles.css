@@ -62,14 +62,12 @@ button {
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
   width: 34px;
   height: 34px;
+  display: block;
   border-radius: 8px;
-  background: #1012ff;
-  box-shadow: 0 0 28px rgba(22, 89, 255, 0.44);
-  font-size: 13px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 18px rgba(191, 255, 0, 0.22));
 }
 
 .nav-links {

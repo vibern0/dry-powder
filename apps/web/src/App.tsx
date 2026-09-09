@@ -359,7 +359,7 @@ function TopNav({
   return (
     <nav className="top-nav">
       <div className="brand-lockup">
-        <div className="brand-mark">DP</div>
+        <img className="brand-mark" src="/logo.png" alt="" aria-hidden="true" />
         <span>Dry Powder</span>
       </div>
       <div className="nav-links" aria-label="Demo pages">
