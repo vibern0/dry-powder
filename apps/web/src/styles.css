@@ -451,6 +451,48 @@ h1 {
   color: #ffce85;
 }
 
+.role-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #252730;
+  border-radius: 8px;
+  background: #0f1014;
+}
+
+.role-panel div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.role-panel span {
+  color: #8f93a1;
+  font-size: 13px;
+}
+
+.role-panel strong {
+  color: #ffffff;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+}
+
+.mini-action {
+  height: 32px;
+  border: 0;
+  border-radius: 999px;
+  background: #24262d;
+  color: #ffffff;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.mini-action.muted {
+  background: #17181e;
+  color: #c8cad4;
+}
+
 .network-card {
   margin-top: 16px;
   padding: 12px;

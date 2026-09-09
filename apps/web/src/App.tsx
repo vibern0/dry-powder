@@ -6,24 +6,29 @@ import {
   addLegs,
   approveAqua,
   connectWallet,
-  createFreshWalletReserve,
+  createFreshMakerSession,
   createReserveBatch,
-  executeEthFill,
+  executeEthFillForMaker,
+  getOrCreateMakerSession,
   hasInjectedWallet,
-  mintMockTokens,
+  mintMakerReserveTokens,
+  mintTakerAssetTokens,
   quoteStrategies,
   readOnchainSnapshot,
   removeStrategies,
   shipStrategies,
   switchToSepolia,
+  useConnectedAccountAsMaker,
   type StepKey,
+  type MakerSession,
   type TransactionUpdate,
   type WalletState
 } from "./onchain/client";
 import { SEPOLIA_CHAIN_ID } from "./onchain/constants";
+import { roleForAccount } from "./onchain/strategy";
 
 const setupSteps: Array<{ key: StepKey; label: string }> = [
-  { key: "mint", label: "Mint mock tokens" },
+  { key: "mint", label: "Mint maker mUSDC" },
   { key: "approveAqua", label: "Approve Aqua" },
   { key: "createReserve", label: "Create reserve" },
   { key: "shipStrategies", label: "Ship strategies" },
@@ -40,6 +45,7 @@ const txRows = [
 export function App() {
   const [state, setState] = useState<DemoState>(initialDemo);
   const [wallet, setWallet] = useState<WalletState | null>(null);
+  const [makerSession, setMakerSession] = useState<MakerSession | null>(null);
   const [completed, setCompleted] = useState<Partial<Record<StepKey, boolean>>>({});
   const [pending, setPending] = useState<StepKey | "connect" | "switch" | "refresh" | null>(null);
   const [eventLog, setEventLog] = useState<TransactionUpdate[]>([]);
@@ -51,13 +57,17 @@ export function App() {
   const summary = useMemo(() => summarizeReserve(visibleState), [visibleState]);
   const tranche = selectTranche(state.reserve);
   const wrongNetwork = wallet && wallet.chainId !== SEPOLIA_CHAIN_ID;
+  const role = wallet ? roleForAccount(wallet.account, makerSession?.maker ?? null) : "maker";
+  const reserveId = makerSession?.reserveId;
 
   async function connect() {
     await run("connect", async () => {
       const next = await connectWallet();
+      const session = makerSession ?? getOrCreateMakerSession(next.account);
       setWallet(next);
-      if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(next);
-      setEventLog([{ step: "quote", message: `Wallet connected: ${shortAddress(next.account)}` }]);
+      setMakerSession(session);
+      if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(session);
+      setEventLog([{ step: "quote", message: `Wallet connected as ${roleForAccount(next.account, session.maker)}: ${shortAddress(next.account)}` }]);
     });
   }
 
@@ -66,29 +76,41 @@ export function App() {
       await switchToSepolia();
       const next = await connectWallet();
       setWallet(next);
-      if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(next);
+      const session = makerSession ?? getOrCreateMakerSession(next.account);
+      setMakerSession(session);
+      if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(session);
     });
   }
 
   async function rotateReserve() {
-    if (!wallet) return;
-    const reserveId = createFreshWalletReserve(wallet.account);
-    setWallet({ ...wallet, reserveId });
+    if (!wallet || !isMakerRole) return;
+    const next = createFreshMakerSession(wallet.account);
+    setMakerSession(next);
     setState(initialDemo);
     setCompleted({});
     setQuotes(null);
     setEventLog([{ step: "quote", message: "Fresh reserve id ready for another demo run." }]);
   }
 
-  async function refresh() {
+  function setConnectedAsMaker() {
     if (!wallet) return;
+    const session = useConnectedAccountAsMaker(wallet.account);
+    setMakerSession(session);
+    setState(initialDemo);
+    setCompleted({});
+    setQuotes(null);
+    setEventLog([{ step: "quote", message: `Maker set to ${shortAddress(wallet.account)}.` }]);
+  }
+
+  async function refresh() {
+    if (!makerSession) return;
     await run("refresh", async () => {
-      await loadSnapshot(wallet);
+      await loadSnapshot(makerSession);
     });
   }
 
-  async function loadSnapshot(target: WalletState) {
-    const snapshot = await readOnchainSnapshot(target.account, target.reserveId);
+  async function loadSnapshot(target: MakerSession) {
+    const snapshot = await readOnchainSnapshot(target.maker, target.reserveId);
     setState(applySnapshot(snapshot.reserve.spent, snapshot.legs));
     setCompleted((previous) => ({
       ...previous,
@@ -99,26 +121,27 @@ export function App() {
   }
 
   async function runSetupStep(step: StepKey) {
-    if (!wallet) return;
+    if (!wallet || !makerSession) return;
     const actions: Record<StepKey, () => Promise<void>> = {
-      mint: () => mintMockTokens(wallet.account, pushEvent),
+      mint: () => mintMakerReserveTokens(wallet.account, pushEvent),
+      mintTaker: () => mintTakerAssetTokens(wallet.account, pushEvent),
       approveAqua: () => approveAqua(wallet.account, pushEvent),
-      createReserve: () => createReserveBatch(wallet.account, wallet.reserveId, pushEvent),
-      addLegs: () => addLegs(wallet.account, wallet.reserveId, pushEvent),
-      activateReserve: () => activateReserve(wallet.account, wallet.reserveId, pushEvent),
-      shipStrategies: () => shipStrategies(wallet.account, wallet.reserveId, pushEvent),
+      createReserve: () => createReserveBatch(wallet.account, makerSession.reserveId, pushEvent),
+      addLegs: () => addLegs(wallet.account, makerSession.reserveId, pushEvent),
+      activateReserve: () => activateReserve(wallet.account, makerSession.reserveId, pushEvent),
+      shipStrategies: () => shipStrategies(wallet.account, makerSession.reserveId, pushEvent),
       removeStrategies: async () => {
-        await removeStrategies(wallet.account, wallet.reserveId, pushEvent);
+        await removeStrategies(wallet.account, makerSession.reserveId, pushEvent);
         setQuotes(null);
         setCompleted((previous) => ({ ...previous, shipStrategies: false, removeStrategies: true, fillEth: false }));
       },
       quote: async () => {
-        const nextQuotes = await quoteStrategies(wallet.account, wallet.reserveId);
+        const nextQuotes = await quoteStrategies(makerSession.maker, makerSession.reserveId);
         setQuotes(Object.fromEntries(nextQuotes.map((quote) => [quote.key, quote.label])) as Record<LegKey, string>);
         pushEvent({ step: "quote", message: "Quotes refreshed from DryPowderRouter." });
       },
       fillEth: async () => {
-        await executeEthFill(wallet.account, wallet.reserveId, pushEvent);
+        await executeEthFillForMaker(wallet.account, makerSession.maker, makerSession.reserveId, pushEvent);
         setCompleted((previous) => ({ ...previous, fillEth: true }));
         await refresh();
       }
@@ -150,6 +173,9 @@ export function App() {
     }
   }
 
+  const isMakerRole = role === "maker";
+  const isTakerRole = role === "taker";
+
   return (
     <main className="app-shell">
       <TopNav wallet={wallet} pending={pending} onConnect={connect} />
@@ -167,18 +193,18 @@ export function App() {
           </p>
 
           <div className="story-actions">
-            <button className="primary-action" onClick={() => runSetupStep("fillEth")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesShipped || pending !== null}>
+            <button className="primary-action" onClick={() => runSetupStep("fillEth")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || !strategiesShipped || pending !== null}>
               <Play size={18} />
               {completed.fillEth ? "ETH fill complete" : "Execute ETH fill"}
             </button>
-            <button className="icon-action" onClick={rotateReserve} aria-label="Create fresh reserve id" disabled={!wallet || pending !== null}>
+            <button className="icon-action" onClick={rotateReserve} aria-label="Create fresh reserve id" disabled={!wallet || !isMakerRole || pending !== null}>
               <RotateCcw size={18} />
             </button>
           </div>
           {error ? <div className="error-banner">{error}</div> : null}
         </div>
 
-        <ReserveCard summary={summary} tranche={tranche} active={Boolean(wallet) && reserveCreated} />
+        <ReserveCard summary={summary} tranche={tranche} active={Boolean(makerSession) && reserveCreated} />
       </section>
 
       <section className="workspace-grid">
@@ -194,12 +220,13 @@ export function App() {
             </button>
           ) : (
             <div className={wallet.gasBalance === 0n ? "wallet-chip warning" : "wallet-chip"}>
-              {shortAddress(wallet.account)} · {wallet.gasBalanceLabel}
+              {role} · {shortAddress(wallet.account)} · {wallet.gasBalanceLabel}
             </div>
           )}
+          <RolePanel wallet={wallet} makerSession={makerSession} onSync={connect} onUseAsMaker={setConnectedAsMaker} pending={pending} />
           <div className="step-list">
             {setupSteps.map((step) => (
-              <button className="step-row" key={step.key} onClick={() => runSetupStep(step.key)} disabled={!wallet || Boolean(wrongNetwork) || pending !== null || isStepDisabled(step.key, completed)}>
+              <button className="step-row" key={step.key} onClick={() => runSetupStep(step.key)} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || pending !== null || isStepDisabled(step.key, completed)}>
                 <span className="step-icon">
                   {completed[step.key] ? <Check size={14} /> : pending === step.key ? "·" : ""}
                 </span>
@@ -217,7 +244,7 @@ export function App() {
             ))}
             <div className="network-row">
               <span>Reserve id</span>
-              <strong>{wallet ? shortHash(wallet.reserveId) : "not connected"}</strong>
+              <strong>{reserveId ? shortHash(reserveId) : "not set"}</strong>
             </div>
           </div>
         </div>
@@ -225,13 +252,16 @@ export function App() {
         <div className="legs-column">
           <PanelTitle icon={<Coins size={18} />} title="Aqua Strategies" />
           <div className="strategy-actions">
+            <button className="secondary-action" onClick={() => runSetupStep("mintTaker")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || pending !== null}>
+              {pending === "mintTaker" ? "Minting..." : "Mint taker assets"}
+            </button>
             <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesShipped || pending !== null}>
               {pending === "quote" ? "Quoting..." : "Quote all"}
             </button>
             <button className="secondary-action" onClick={refresh} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
               {pending === "refresh" ? "Refreshing..." : "Refresh"}
             </button>
-            <button className="secondary-action danger" onClick={() => runSetupStep("removeStrategies")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesShipped || pending !== null}>
+            <button className="secondary-action danger" onClick={() => runSetupStep("removeStrategies")} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || !strategiesShipped || pending !== null}>
               <Trash2 size={15} />
               Remove
             </button>
@@ -245,7 +275,7 @@ export function App() {
           ) : (
             <EmptyPanel
               title={reserveCreated ? "No Aqua strategies shipped" : "No reserve strategies yet"}
-              detail={reserveCreated ? "Ship the batch when you are ready to quote and fill." : "Create a reserve first, then ship ETH, WBTC, and LINK strategies."}
+              detail={reserveCreated ? "Connect as maker to ship, then switch to taker to quote and fill." : "Connect as maker, then create the reserve batch."}
             />
           )}
         </div>
@@ -294,6 +324,52 @@ function TopNav({
         {wallet ? shortAddress(wallet.account) : pending === "connect" ? "Connecting..." : "Connect wallet"}
       </button>
     </nav>
+  );
+}
+
+function RolePanel({
+  wallet,
+  makerSession,
+  pending,
+  onSync,
+  onUseAsMaker
+}: {
+  wallet: WalletState | null;
+  makerSession: MakerSession | null;
+  pending: StepKey | "connect" | "switch" | "refresh" | null;
+  onSync: () => void;
+  onUseAsMaker: () => void;
+}) {
+  if (!wallet) {
+    return (
+      <div className="role-panel">
+        <span>Maker</span>
+        <strong>Connect the maker wallet first.</strong>
+      </div>
+    );
+  }
+
+  const role = roleForAccount(wallet.account, makerSession?.maker ?? null);
+
+  return (
+    <div className="role-panel">
+      <div>
+        <span>Maker</span>
+        <strong>{makerSession ? shortAddress(makerSession.maker) : "not set"}</strong>
+      </div>
+      <div>
+        <span>Connected</span>
+        <strong>{role} · {shortAddress(wallet.account)}</strong>
+      </div>
+      <button className="mini-action" onClick={onSync} disabled={pending !== null}>
+        Sync wallet
+      </button>
+      {role === "taker" ? (
+        <button className="mini-action muted" onClick={onUseAsMaker} disabled={pending !== null}>
+          Use connected as maker
+        </button>
+      ) : null}
+    </div>
   );
 }
 

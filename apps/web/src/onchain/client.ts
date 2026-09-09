@@ -19,14 +19,28 @@ import { AQUA_ADDRESS, DRY_POWDER_ROUTER, MOCK_ERC20_ABI, ROUTER_ABI, SEPOLIA_CH
 import { buildSetupPlan, buildStrategy, createReserveId, strategyInputs, usdc, type LegKey } from "./strategy";
 import { assertHasSepoliaGas, formatEthBalance } from "./strategy";
 
-export type StepKey = "mint" | "approveAqua" | "createReserve" | "addLegs" | "activateReserve" | "shipStrategies" | "removeStrategies" | "quote" | "fillEth";
+export type StepKey =
+  | "mint"
+  | "mintTaker"
+  | "approveAqua"
+  | "createReserve"
+  | "addLegs"
+  | "activateReserve"
+  | "shipStrategies"
+  | "removeStrategies"
+  | "quote"
+  | "fillEth";
 
 export type WalletState = {
   account: Address;
   chainId: number;
-  reserveId: Hex;
   gasBalance: bigint;
   gasBalanceLabel: string;
+};
+
+export type MakerSession = {
+  maker: Address;
+  reserveId: Hex;
 };
 
 export type TransactionUpdate = {
@@ -57,7 +71,6 @@ export async function connectWallet(): Promise<WalletState> {
   return {
     account,
     chainId: Number.parseInt(chainHex, 16),
-    reserveId: getOrCreateReserveId(account),
     ...(await readGasBalance(account))
   };
 }
@@ -87,17 +100,53 @@ export async function switchToSepolia() {
   }
 }
 
-export function createFreshWalletReserve(account: Address): Hex {
-  const reserveId = createReserveId(account, Date.now().toString());
-  window.localStorage.setItem(reserveStorageKey(account), reserveId);
-  return reserveId;
+export function getOrCreateMakerSession(account: Address): MakerSession {
+  const stored = getStoredMakerSession();
+  if (stored) return stored;
+  const session = {
+    maker: account,
+    reserveId: getOrCreateReserveId(account)
+  };
+  saveMakerSession(session);
+  return session;
 }
 
-export async function mintMockTokens(account: Address, onUpdate: SendUpdate) {
+export function createFreshMakerSession(account: Address): MakerSession {
+  const reserveId = createReserveId(account, Date.now().toString());
+  window.localStorage.setItem(reserveStorageKey(account), reserveId);
+  const session = { maker: account, reserveId };
+  saveMakerSession(session);
+  return session;
+}
+
+export function useConnectedAccountAsMaker(account: Address): MakerSession {
+  const session = {
+    maker: account,
+    reserveId: getOrCreateReserveId(account)
+  };
+  saveMakerSession(session);
+  return session;
+}
+
+export async function mintMakerReserveTokens(account: Address, onUpdate: SendUpdate) {
+  const { publicClient, walletClient } = makeClients(account);
+  assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
+  const hash = await walletClient.writeContract({
+    account,
+    chain: sepolia,
+    address: TOKENS.mUSDC,
+    abi: MOCK_ERC20_ABI,
+    functionName: "mint",
+    args: [account, usdc("10000")]
+  });
+  onUpdate({ step: "mint", message: "Minting 10,000 maker mUSDC", hash });
+  await publicClient.waitForTransactionReceipt({ hash });
+}
+
+export async function mintTakerAssetTokens(account: Address, onUpdate: SendUpdate) {
   const { publicClient, walletClient } = makeClients(account);
   assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
   const mints = [
-    { token: TOKENS.mUSDC, amount: usdc("10000"), label: "10,000 mUSDC" },
     { token: TOKENS.mETH, amount: parseAsset("100", "eth"), label: "100 mETH" },
     { token: TOKENS.mWBTC, amount: parseAsset("2", "wbtc"), label: "2 mWBTC" },
     { token: TOKENS.mLINK, amount: parseAsset("100000", "link"), label: "100,000 mLINK" }
@@ -112,7 +161,7 @@ export async function mintMockTokens(account: Address, onUpdate: SendUpdate) {
       functionName: "mint",
       args: [account, mint.amount]
     });
-    onUpdate({ step: "mint", message: `Minting ${mint.label}`, hash });
+    onUpdate({ step: "mint", message: `Minting taker ${mint.label}`, hash });
     await publicClient.waitForTransactionReceipt({ hash });
   }
 }
@@ -210,12 +259,12 @@ export async function removeStrategies(account: Address, reserveId: Hex, onUpdat
   }
 }
 
-export async function quoteStrategies(account: Address, reserveId: Hex) {
-  const { publicClient } = makeClients(account);
+export async function quoteStrategies(maker: Address, reserveId: Hex) {
+  const { publicClient } = makeClients();
   const keys: LegKey[] = ["eth", "wbtc", "link"];
   const quotes = await Promise.all(
     keys.map(async (key) => {
-      const strategy = buildStrategy(key, account, reserveId);
+      const strategy = buildStrategy(key, maker, reserveId);
       const [amountIn, amountOut, orderHash] = await publicClient.readContract({
         address: DRY_POWDER_ROUTER,
         abi: ROUTER_ABI,
@@ -237,12 +286,16 @@ export async function quoteStrategies(account: Address, reserveId: Hex) {
 }
 
 export async function executeEthFill(account: Address, reserveId: Hex, onUpdate: SendUpdate) {
-  await approveToken(account, TOKENS.mETH, DRY_POWDER_ROUTER, "fillEth", "Approving mETH for router", onUpdate);
+  await executeEthFillForMaker(account, account, reserveId, onUpdate);
+}
 
-  const { publicClient, walletClient } = makeClients(account);
-  const strategy = buildStrategy("eth", account, reserveId);
+export async function executeEthFillForMaker(taker: Address, maker: Address, reserveId: Hex, onUpdate: SendUpdate) {
+  await approveToken(taker, TOKENS.mETH, DRY_POWDER_ROUTER, "fillEth", "Approving taker mETH for router", onUpdate);
+
+  const { publicClient, walletClient } = makeClients(taker);
+  const strategy = buildStrategy("eth", maker, reserveId);
   const hash = await walletClient.writeContract({
-    account,
+    account: taker,
     chain: sepolia,
     address: DRY_POWDER_ROUTER,
     abi: ROUTER_ABI,
@@ -334,7 +387,27 @@ function getOrCreateReserveId(account: Address): Hex {
   const existing = window.localStorage.getItem(key);
   if (existing?.startsWith("0x") && existing.length === 66) return existing as Hex;
 
-  return createFreshWalletReserve(account);
+  return createFreshMakerSession(account).reserveId;
+}
+
+function getStoredMakerSession(): MakerSession | null {
+  const stored = window.localStorage.getItem("dry-powder.maker-session");
+  if (!stored) return null;
+
+  try {
+    const parsed = JSON.parse(stored) as MakerSession;
+    if (parsed.maker?.startsWith("0x") && parsed.reserveId?.startsWith("0x") && parsed.reserveId.length === 66) {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function saveMakerSession(session: MakerSession) {
+  window.localStorage.setItem("dry-powder.maker-session", JSON.stringify(session));
 }
 
 async function areStrategiesShipped(publicClient: PublicClient, account: Address, reserveId: Hex) {

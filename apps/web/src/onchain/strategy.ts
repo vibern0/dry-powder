@@ -102,6 +102,11 @@ export function assertHasSepoliaGas(balance: bigint) {
   }
 }
 
+export function roleForAccount(account: Address, maker: Address | null) {
+  if (!maker || account.toLowerCase() === maker.toLowerCase()) return "maker";
+  return "taker";
+}
+
 export function createReserveId(maker: Address, nonce: string): Hex {
   return keccak256(stringToBytes(`dry-powder:web-demo:${maker}:${nonce}`));
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { encodeAbiParameters, keccak256, parseUnits } from "viem";
 import { AQUA_ADDRESS, DRY_POWDER_ROUTER, TOKENS } from "./onchain/constants";
-import { assertHasSepoliaGas, buildSetupPlan, buildStrategy, createReserveId, formatEthBalance, usdc } from "./onchain/strategy";
+import { assertHasSepoliaGas, buildSetupPlan, buildStrategy, createReserveId, formatEthBalance, roleForAccount, usdc } from "./onchain/strategy";
 
 describe("onchain strategy helpers", () => {
   it("creates deterministic reserve ids from maker and nonce", () => {
@@ -34,6 +34,24 @@ describe("onchain strategy helpers", () => {
     expect(strategy.strategyBytes).toBe(encodedOrder);
     expect(strategy.shipTokens).toEqual([TOKENS.mUSDC, TOKENS.mETH]);
     expect(strategy.shipAmounts).toEqual([parseUnits("27000", 6), parseUnits("10", 18)]);
+  });
+
+  it("builds taker quotes against the stored maker, not the connected taker", () => {
+    const maker = "0x000000000000000000000000000000000000dEaD";
+    const taker = "0x000000000000000000000000000000000000bEEF";
+    const reserveId = createReserveId(maker, "demo-1");
+    const strategy = buildStrategy("eth", maker, reserveId);
+
+    expect(strategy.order.maker).toBe(maker);
+    expect(strategy.order.maker).not.toBe(taker);
+  });
+
+  it("classifies connected accounts relative to the selected maker", () => {
+    const maker = "0x000000000000000000000000000000000000dEaD";
+
+    expect(roleForAccount(maker, maker)).toBe("maker");
+    expect(roleForAccount("0x000000000000000000000000000000000000bEEF", maker)).toBe("taker");
+    expect(roleForAccount("0x000000000000000000000000000000000000bEEF", null)).toBe("maker");
   });
 
   it("uses the Aqua SDK to build ship transactions", () => {
