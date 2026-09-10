@@ -1,13 +1,12 @@
-import { ArrowRight, Check, Coins, Droplets, ExternalLink, Gauge, RotateCcw, Trash2, Wallet } from "lucide-react";
+import { ArrowRight, Check, Coins, Droplets, Gauge, RotateCcw, Trash2, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
 import { formatUsd, initialDemo, selectTranche, summarizeReserve, type DemoState, type Leg, type LegKey } from "./demoModel";
 import {
-  activateReserve,
-  addLegs,
+  addStrategy,
   approveAqua,
   connectWallet,
   createFreshMakerSession,
-  createReserveBatch,
+  editStrategy,
   executeFillForMaker,
   getOrCreateMakerSession,
   hasInjectedWallet,
@@ -15,8 +14,7 @@ import {
   mintTakerAssetTokens,
   quoteStrategies,
   readOnchainSnapshot,
-  removeStrategies,
-  shipStrategies,
+  removeStrategy,
   switchToSepolia,
   useConnectedAccountAsMaker,
   type StepKey,
@@ -31,16 +29,13 @@ type DemoPage = "maker" | "taker";
 
 const setupSteps: Array<{ key: StepKey; label: string }> = [
   { key: "mint", label: "Mint maker mUSDC" },
-  { key: "approveAqua", label: "Approve Aqua" },
-  { key: "createReserve", label: "Create reserve" },
-  { key: "shipStrategies", label: "Ship strategies" },
-  { key: "removeStrategies", label: "Remove strategies" }
+  { key: "approveAqua", label: "Approve Aqua" }
 ];
 
 const txRows = [
   ["Network", "Sepolia"],
   ["Aqua registry", "0x1111...6a90a"],
-  ["Router", "0xbaeE...256c"],
+  ["Router", "0xbf5E...5A9B"],
   ["Mode", "Live Sepolia"]
 ];
 
@@ -53,17 +48,23 @@ export function App() {
   const [eventLog, setEventLog] = useState<TransactionUpdate[]>([]);
   const [quotes, setQuotes] = useState<Record<LegKey, string> | null>(null);
   const [page, setPage] = useState<DemoPage>("maker");
+  const [activeLegKeys, setActiveLegKeys] = useState<LegKey[]>([]);
+  const [newStrategyAsset, setNewStrategyAsset] = useState<LegKey>("eth");
+  const [editMaxSpend, setEditMaxSpend] = useState<Record<LegKey, string>>({ eth: "6000", wbtc: "6000", link: "4000" });
   const [fillAsset, setFillAsset] = useState<LegKey>("eth");
   const [fillAmount, setFillAmount] = useState("4000");
   const [error, setError] = useState<string | null>(null);
   const reserveCreated = Boolean(completed.createReserve);
-  const strategiesShipped = Boolean(completed.shipStrategies) && !completed.removeStrategies;
-  const visibleState = strategiesShipped ? state : { ...state, legs: [] };
+  const strategiesActive = activeLegKeys.length > 0;
+  const visibleState = strategiesActive ? { ...state, legs: state.legs.filter((leg) => activeLegKeys.includes(leg.key)) } : { ...state, legs: [] };
   const summary = useMemo(() => summarizeReserve(visibleState), [visibleState]);
   const tranche = selectTranche(state.reserve);
   const wrongNetwork = wallet && wallet.chainId !== SEPOLIA_CHAIN_ID;
   const role = wallet ? roleForAccount(wallet.account, makerSession?.maker ?? null) : "maker";
   const reserveId = makerSession?.reserveId;
+  const strategyKeys = Object.keys(strategyInputs) as LegKey[];
+  const availableStrategyKeys = strategyKeys.filter((key) => !activeLegKeys.includes(key));
+  const fillableStrategyKeys = activeLegKeys.length ? activeLegKeys : strategyKeys;
 
   async function connect() {
     await run("connect", async () => {
@@ -102,6 +103,7 @@ export function App() {
     setState(initialDemo);
     setCompleted({});
     setQuotes(null);
+    setActiveLegKeys([]);
     setEventLog([{ step: "quote", message: "Fresh reserve id ready for another demo run." }]);
   }
 
@@ -112,6 +114,7 @@ export function App() {
     setState(initialDemo);
     setCompleted({});
     setQuotes(null);
+    setActiveLegKeys([]);
     setEventLog([{ step: "quote", message: `Maker set to ${shortAddress(wallet.account)}.` }]);
   }
 
@@ -125,11 +128,21 @@ export function App() {
   async function loadSnapshot(target: MakerSession) {
     const snapshot = await readOnchainSnapshot(target.maker, target.reserveId);
     setState(applySnapshot(snapshot.reserve.spent, snapshot.legs));
+    const nextActiveLegKeys = strategyKeys.filter((key) => snapshot.legs[key].exists && snapshot.shipped[key]);
+    const nextAvailableLegKeys = strategyKeys.filter((key) => !nextActiveLegKeys.includes(key));
+    setActiveLegKeys(nextActiveLegKeys);
+    setFillAsset((current) => nextActiveLegKeys.includes(current) || nextActiveLegKeys.length === 0 ? current : nextActiveLegKeys[0]);
+    setNewStrategyAsset((current) => nextActiveLegKeys.includes(current) ? nextAvailableLegKeys[0] ?? current : current);
+    setEditMaxSpend({
+      eth: formatTokenAmount(snapshot.legs.eth.maxSpend),
+      wbtc: formatTokenAmount(snapshot.legs.wbtc.maxSpend),
+      link: formatTokenAmount(snapshot.legs.link.maxSpend)
+    });
     setCompleted((previous) => ({
       ...previous,
       createReserve: snapshot.reserve.exists,
-      shipStrategies: snapshot.shipped,
-      removeStrategies: snapshot.shipped ? false : previous.removeStrategies
+      addStrategy: nextActiveLegKeys.length > 0,
+      removeStrategy: false
     }));
   }
 
@@ -139,17 +152,13 @@ export function App() {
       mint: () => mintMakerReserveTokens(wallet.account, pushEvent),
       mintTaker: () => mintTakerAssetTokens(wallet.account, pushEvent),
       approveAqua: () => approveAqua(wallet.account, pushEvent),
-      createReserve: () => createReserveBatch(wallet.account, makerSession.reserveId, pushEvent),
-      addLegs: () => addLegs(wallet.account, makerSession.reserveId, pushEvent),
-      activateReserve: () => activateReserve(wallet.account, makerSession.reserveId, pushEvent),
-      shipStrategies: () => shipStrategies(wallet.account, makerSession.reserveId, pushEvent),
-      removeStrategies: async () => {
-        await removeStrategies(wallet.account, makerSession.reserveId, pushEvent);
-        setQuotes(null);
-        setCompleted((previous) => ({ ...previous, shipStrategies: false, removeStrategies: true, fill: false }));
-      },
+      createReserve: async () => {},
+      activateReserve: async () => {},
+      addStrategy: async () => {},
+      editStrategy: async () => {},
+      removeStrategy: async () => {},
       quote: async () => {
-        const nextQuotes = await quoteStrategies(makerSession.maker, makerSession.reserveId);
+        const nextQuotes = await quoteStrategies(makerSession.maker, makerSession.reserveId, activeLegKeys);
         setQuotes(Object.fromEntries(nextQuotes.map((quote) => [quote.key, quote.label])) as Record<LegKey, string>);
         pushEvent({ step: "quote", message: "Quotes refreshed from DryPowderRouter." });
       },
@@ -164,9 +173,34 @@ export function App() {
       await actions[step]();
       setCompleted((previous) => ({
         ...previous,
-        [step]: true,
-        ...(step === "shipStrategies" ? { removeStrategies: false } : null)
+        [step]: true
       }));
+    });
+  }
+
+  async function addSelectedStrategy() {
+    if (!wallet || !makerSession || !isMakerRole) return;
+    await run("addStrategy", async () => {
+      await addStrategy(wallet.account, makerSession.reserveId, newStrategyAsset, pushEvent);
+      await loadSnapshot(makerSession);
+    });
+  }
+
+  async function updateSelectedStrategy(key: LegKey) {
+    if (!wallet || !makerSession || !isMakerRole) return;
+    await run("editStrategy", async () => {
+      await editStrategy(wallet.account, makerSession.reserveId, key, editMaxSpend[key], pushEvent);
+      await loadSnapshot(makerSession);
+    });
+  }
+
+  async function deleteSelectedStrategy(key: LegKey) {
+    if (!wallet || !makerSession || !isMakerRole) return;
+    await run("removeStrategy", async () => {
+      await removeStrategy(wallet.account, makerSession.reserveId, key, pushEvent);
+      setQuotes(null);
+      setCompleted((previous) => ({ ...previous, fill: false }));
+      await loadSnapshot(makerSession);
     });
   }
 
@@ -255,18 +289,18 @@ export function App() {
                 <span>{pending === "mintTaker" ? "Confirm in wallet..." : "Mint taker assets"}</span>
               </button>
               <label className="field-label" htmlFor="fill-asset">Fill asset</label>
-              <select id="fill-asset" className="select-input" value={fillAsset} onChange={(event) => setFillAsset(event.target.value as LegKey)}>
-                {(Object.keys(strategyInputs) as LegKey[]).map((key) => (
+              <select id="fill-asset" className="select-input" value={fillAsset} onChange={(event) => setFillAsset(event.target.value as LegKey)} disabled={!strategiesActive}>
+                {fillableStrategyKeys.map((key) => (
                   <option value={key} key={key}>{strategyInputs[key].label}</option>
                 ))}
               </select>
               <label className="field-label" htmlFor="fill-amount">mUSDC amount</label>
               <input id="fill-amount" className="text-input" value={fillAmount} onChange={(event) => setFillAmount(event.target.value)} inputMode="decimal" />
-              <button className="step-row" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesShipped || pending !== null}>
+              <button className="step-row" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesActive || pending !== null}>
                 <span className="step-icon">{pending === "quote" ? "·" : ""}</span>
                 <span>{pending === "quote" ? "Confirm in wallet..." : "Quote all strategies"}</span>
               </button>
-              <button className="step-row primary-step" onClick={() => runSetupStep("fill")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || !strategiesShipped || pending !== null || !fillAmount}>
+              <button className="step-row primary-step" onClick={() => runSetupStep("fill")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || !strategiesActive || pending !== null || !fillAmount}>
                 <span className="step-icon">{completed.fill ? <Check size={14} /> : pending === "fill" ? "·" : ""}</span>
                 <span>{pending === "fill" ? "Confirm in wallet..." : `Execute ${strategyInputs[fillAsset].label} fill`}</span>
               </button>
@@ -290,29 +324,46 @@ export function App() {
         <div className="legs-column">
           <PanelTitle icon={<Coins size={18} />} title="Aqua Strategies" />
           <div className="strategy-actions">
-            <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesShipped || pending !== null}>
+            {page === "maker" ? (
+              <>
+                <select className="compact-select" value={newStrategyAsset} onChange={(event) => setNewStrategyAsset(event.target.value as LegKey)} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || availableStrategyKeys.length === 0 || pending !== null}>
+                  {availableStrategyKeys.map((key) => (
+                    <option value={key} key={key}>{strategyInputs[key].label}</option>
+                  ))}
+                </select>
+                <button className="secondary-action" onClick={addSelectedStrategy} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || pending !== null || availableStrategyKeys.length === 0}>
+                  {pending === "addStrategy" ? "Adding..." : "+ Add"}
+                </button>
+              </>
+            ) : null}
+            <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesActive || pending !== null}>
               {pending === "quote" ? "Quoting..." : "Quote all"}
             </button>
             <button className="secondary-action" onClick={refresh} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
               {pending === "refresh" ? "Refreshing..." : "Refresh"}
             </button>
-            {page === "maker" ? (
-              <button className="secondary-action danger" onClick={() => runSetupStep("removeStrategies")} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || !strategiesShipped || pending !== null}>
-                <Trash2 size={15} />
-                Remove
-              </button>
-            ) : null}
           </div>
-          {strategiesShipped ? (
+          {strategiesActive ? (
             <div className="leg-grid">
               {visibleState.legs.map((leg) => (
-                <LegCard key={leg.key} leg={leg} quote={quotes?.[leg.key]} active={leg.key === fillAsset && Boolean(completed.fill)} />
+                <LegCard
+                  key={leg.key}
+                  leg={leg}
+                  quote={quotes?.[leg.key]}
+                  active={leg.key === fillAsset && Boolean(completed.fill)}
+                  editable={page === "maker"}
+                  maxSpendValue={editMaxSpend[leg.key]}
+                  pending={pending}
+                  onMaxSpendChange={(value) => setEditMaxSpend((previous) => ({ ...previous, [leg.key]: value }))}
+                  onEdit={() => updateSelectedStrategy(leg.key)}
+                  onDelete={() => deleteSelectedStrategy(leg.key)}
+                />
               ))}
             </div>
           ) : (
             <EmptyPanel
-              title={reserveCreated ? "No Aqua strategies shipped" : "No reserve strategies yet"}
-              detail={reserveCreated ? "Connect as maker to ship, then switch to taker to quote and fill." : "Connect as maker, then create the reserve batch."}
+              title={reserveCreated ? "No Aqua strategies active" : "No Aqua strategies yet"}
+              detail={page === "maker" ? "Use Add to create and ship one strategy at a time." : "Ask the maker to add a strategy, then quote and fill it here."}
             />
           )}
         </div>
@@ -424,7 +475,7 @@ function RolePanel({
   );
 }
 
-function applySnapshot(spent: bigint, legs: { eth: { spent: bigint }; wbtc: { spent: bigint }; link: { spent: bigint } }): DemoState {
+function applySnapshot(spent: bigint, legs: Record<LegKey, { maxSpend: bigint; spent: bigint }>): DemoState {
   const spentNumber = Number(spent) / 1_000_000;
   const reserve = { ...initialDemo.reserve, spent: spentNumber };
   const activeTranche = selectTranche(reserve);
@@ -433,6 +484,7 @@ function applySnapshot(spent: bigint, legs: { eth: { spent: bigint }; wbtc: { sp
     reserve,
     legs: initialDemo.legs.map((leg) => ({
       ...leg,
+      maxSpend: Number(legs[leg.key].maxSpend) / 1_000_000,
       spent: Number(legs[leg.key].spent) / 1_000_000,
       currentMaxPrice: (leg.baseMaxPrice * activeTranche.multiplierBps) / 10000
     })),
@@ -528,12 +580,30 @@ function EmptyPanel({ title, detail }: { title: string; detail: string }) {
 
 function isStepDisabled(step: StepKey, completed: Partial<Record<StepKey, boolean>>) {
   if (step === "createReserve") return Boolean(completed.createReserve);
-  if (step === "shipStrategies") return !completed.createReserve || Boolean(completed.shipStrategies);
-  if (step === "removeStrategies") return !completed.shipStrategies || Boolean(completed.removeStrategies);
   return false;
 }
 
-function LegCard({ leg, quote, active }: { leg: Leg; quote?: string; active: boolean }) {
+function LegCard({
+  leg,
+  quote,
+  active,
+  editable,
+  maxSpendValue,
+  pending,
+  onMaxSpendChange,
+  onEdit,
+  onDelete
+}: {
+  leg: Leg;
+  quote?: string;
+  active: boolean;
+  editable: boolean;
+  maxSpendValue: string;
+  pending: StepKey | "connect" | "switch" | "refresh" | null;
+  onMaxSpendChange: (value: string) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
   const utilization = (leg.spent / leg.maxSpend) * 100;
   const changed = leg.currentMaxPrice !== leg.baseMaxPrice;
 
@@ -561,8 +631,21 @@ function LegCard({ leg, quote, active }: { leg: Leg; quote?: string; active: boo
         <span>{formatUsd(leg.spent)} spent</span>
         <strong>{formatUsd(leg.maxSpend)} cap</strong>
       </div>
+      {editable ? (
+        <div className="card-actions">
+          <input className="mini-input" aria-label={`${leg.symbol} max spend`} value={maxSpendValue} onChange={(event) => onMaxSpendChange(event.target.value)} inputMode="decimal" />
+          <button className="mini-action" onClick={onEdit} disabled={pending !== null || !maxSpendValue}>Edit</button>
+          <button className="mini-action danger" onClick={onDelete} disabled={pending !== null}>
+            <Trash2 size={14} />
+          </button>
+        </div>
+      ) : null}
     </article>
   );
+}
+
+function formatTokenAmount(value: bigint) {
+  return (Number(value) / 1_000_000).toString();
 }
 
 function shortAddress(address: string) {

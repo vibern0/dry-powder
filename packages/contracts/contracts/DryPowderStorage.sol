@@ -38,10 +38,14 @@ contract DryPowderStorage {
     error InvalidLegToken();
     error InvalidLegMaxSpend();
     error LegAlreadyExists();
+    error LegNotFound();
+    error LegMaxSpendBelowSpent();
     error ReserveNeedsLeg();
 
     event ReserveCreated(address indexed maker, bytes32 indexed reserveId, address indexed reserveToken, uint256 totalBudget);
     event LegAdded(address indexed maker, bytes32 indexed reserveId, address indexed token, uint256 maxSpend);
+    event LegUpdated(address indexed maker, bytes32 indexed reserveId, address indexed token, uint256 maxSpend);
+    event LegRemoved(address indexed maker, bytes32 indexed reserveId, address indexed token, uint256 spent);
     event ReserveActivated(address indexed maker, bytes32 indexed reserveId);
 
     function createReserve(
@@ -79,16 +83,48 @@ contract DryPowderStorage {
         Layout storage $ = _layout();
         Reserve storage reserve = $.reserves[msg.sender][reserveId];
         _requireReserve(reserve);
-        if (reserve.active) revert ReserveAlreadyActive();
 
         Leg storage leg = $.legs[msg.sender][reserveId][token];
         if (leg.exists) revert LegAlreadyExists();
+        if (maxSpend < leg.spent) revert LegMaxSpendBelowSpent();
 
         leg.maxSpend = maxSpend;
         leg.exists = true;
         $.legCounts[msg.sender][reserveId]++;
 
         emit LegAdded(msg.sender, reserveId, token, maxSpend);
+    }
+
+    function updateLeg(bytes32 reserveId, address token, uint256 maxSpend) external {
+        if (maxSpend == 0) revert InvalidLegMaxSpend();
+
+        Layout storage $ = _layout();
+        Reserve storage reserve = $.reserves[msg.sender][reserveId];
+        _requireReserve(reserve);
+
+        Leg storage leg = $.legs[msg.sender][reserveId][token];
+        if (!leg.exists) revert LegNotFound();
+        if (maxSpend < leg.spent) revert LegMaxSpendBelowSpent();
+
+        leg.maxSpend = maxSpend;
+
+        emit LegUpdated(msg.sender, reserveId, token, maxSpend);
+    }
+
+    function removeLeg(bytes32 reserveId, address token) external {
+        Layout storage $ = _layout();
+        Reserve storage reserve = $.reserves[msg.sender][reserveId];
+        _requireReserve(reserve);
+
+        Leg storage leg = $.legs[msg.sender][reserveId][token];
+        if (!leg.exists) revert LegNotFound();
+
+        uint256 spent = leg.spent;
+        leg.maxSpend = 0;
+        leg.exists = false;
+        $.legCounts[msg.sender][reserveId]--;
+
+        emit LegRemoved(msg.sender, reserveId, token, spent);
     }
 
     function activateReserve(bytes32 reserveId) external {

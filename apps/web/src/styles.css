@@ -399,7 +399,9 @@ h1 {
 .secondary-action:not(:disabled):hover,
 .wide-action:not(:disabled):hover,
 .select-input:not(:disabled):hover,
-.text-input:not(:disabled):hover {
+.text-input:not(:disabled):hover,
+.compact-select:not(:disabled):hover,
+.mini-input:not(:disabled):hover {
   background: #22242b;
 }
 
@@ -435,7 +437,9 @@ h1 {
 }
 
 .select-input,
-.text-input {
+.text-input,
+.compact-select,
+.mini-input {
   width: 100%;
   min-height: 42px;
   padding: 0 12px;
@@ -444,6 +448,12 @@ h1 {
   background: #18191f;
   color: #ffffff;
   font: inherit;
+}
+
+.compact-select {
+  width: 120px;
+  min-height: 36px;
+  font-size: 14px;
 }
 
 .wide-action,
@@ -523,6 +533,14 @@ h1 {
 .mini-action.muted {
   background: #17181e;
   color: #c8cad4;
+}
+
+.mini-action.danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 111, 111, 0.13);
+  color: #ffd5d5;
 }
 
 .network-card {
@@ -654,6 +672,18 @@ h1 {
 
 .leg-bottom strong {
   margin: 0;
+  font-size: 13px;
+}
+
+.card-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 38px;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.mini-input {
+  min-height: 32px;
   font-size: 13px;
 }
 

@@ -2,13 +2,13 @@ import type { Address } from "viem";
 
 export const SEPOLIA_CHAIN_ID = 11155111;
 export const AQUA_ADDRESS = "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a" as Address;
-export const DRY_POWDER_ROUTER = "0xbaeECF2112476D996887CcDD12429663e6B1256c" as Address;
+export const DRY_POWDER_ROUTER = "0xbf5E9Ec40cD683EB02215759708751E61A655A9B" as Address;
 
 export const TOKENS = {
-  mUSDC: "0xf8E3d9C37E0fD7DCa9bfe73D418B9203e3910D49",
-  mETH: "0x9AaBcA389CE123634Cf511d085e3e68f42ec4FE1",
-  mWBTC: "0xa2da0281b907c712c1FfdD77414aEBd1a43d094E",
-  mLINK: "0x8F68237Ce63272ceE37987Ae1e19cBd3aAe65C20"
+  mUSDC: "0x5b9d76B3517D04AAD311E5197eEEb801c8C133D4",
+  mETH: "0x2782E69ab9456CD1505f3598eaAb18BF63146683",
+  mWBTC: "0xc847B5a5A8916C40c77d71Ef3312356991414c36",
+  mLINK: "0x406A43BfE9fFA7204a3d5503d3D6379D4ADC0353"
 } as const satisfies Record<string, Address>;
 
 export const DRY_POWDER_OPCODE = 0x34;
@@ -42,6 +42,27 @@ export const ROUTER_ABI = [
       { name: "reserveId", type: "bytes32" },
       { name: "token", type: "address" },
       { name: "maxSpend", type: "uint256" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "updateLeg",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "reserveId", type: "bytes32" },
+      { name: "token", type: "address" },
+      { name: "maxSpend", type: "uint256" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "removeLeg",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "reserveId", type: "bytes32" },
+      { name: "token", type: "address" }
     ],
     outputs: []
   },

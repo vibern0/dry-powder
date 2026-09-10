@@ -63,6 +63,13 @@ export type FillIntent = {
   message: string;
 };
 
+export type StrategyPlan = {
+  leg: { token: Address; maxSpend: bigint };
+  strategy: BuiltStrategy;
+  shipTransaction: { to: Address; data: Hex; value: bigint };
+  dockTransaction: { to: Address; data: Hex; value: bigint };
+};
+
 export const strategyInputs: Record<LegKey, StrategyInput> = {
   eth: {
     key: "eth",
@@ -175,37 +182,45 @@ export function buildFillIntent(key: LegKey, maker: Address, reserveId: Hex, res
   };
 }
 
-export function buildSetupPlan(maker: Address, reserveId: Hex) {
-  const strategies = (Object.keys(strategyInputs) as LegKey[]).map((key) => buildStrategy(key, maker, reserveId));
+export function buildStrategyPlan(maker: Address, reserveId: Hex, key: LegKey): StrategyPlan {
+  const strategy = buildStrategy(key, maker, reserveId);
   const aqua = new AquaProtocolContract(new OneInchAddress(AQUA_ADDRESS));
+  const legMaxSpend: Record<LegKey, bigint> = {
+    eth: usdc("6000"),
+    wbtc: usdc("6000"),
+    link: usdc("4000")
+  };
+
+  return {
+    leg: { token: strategy.input.asset, maxSpend: legMaxSpend[key] },
+    strategy,
+    shipTransaction: aqua.ship({
+      app: new OneInchAddress(DRY_POWDER_ROUTER),
+      strategy: new HexString(strategy.strategyBytes),
+      amountsAndTokens: strategy.shipTokens.map((token, index) => ({
+        token: new OneInchAddress(token),
+        amount: strategy.shipAmounts[index]
+      }))
+    }),
+    dockTransaction: aqua.dock({
+      app: new OneInchAddress(DRY_POWDER_ROUTER),
+      strategyHash: new HexString(strategy.strategyHash),
+      tokens: strategy.shipTokens.map((token) => new OneInchAddress(token))
+    })
+  };
+}
+
+export function buildSetupPlan(maker: Address, reserveId: Hex) {
+  const plans = (Object.keys(strategyInputs) as LegKey[]).map((key) => buildStrategyPlan(maker, reserveId, key));
 
   return {
     totalBudget: usdc("10000"),
     reserveThresholds: [usdc("4000"), usdc("7500"), usdc("10000")],
     multipliersBps: [10000n, 9500n, 9000n],
-    legs: [
-      { token: TOKENS.mETH, maxSpend: usdc("6000") },
-      { token: TOKENS.mWBTC, maxSpend: usdc("6000") },
-      { token: TOKENS.mLINK, maxSpend: usdc("4000") }
-    ],
-    strategies,
-    shipTransactions: strategies.map((strategy) =>
-      aqua.ship({
-        app: new OneInchAddress(DRY_POWDER_ROUTER),
-        strategy: new HexString(strategy.strategyBytes),
-        amountsAndTokens: strategy.shipTokens.map((token, index) => ({
-          token: new OneInchAddress(token),
-          amount: strategy.shipAmounts[index]
-        }))
-      })
-    ),
-    dockTransactions: strategies.map((strategy) =>
-      aqua.dock({
-        app: new OneInchAddress(DRY_POWDER_ROUTER),
-        strategyHash: new HexString(strategy.strategyHash),
-        tokens: strategy.shipTokens.map((token) => new OneInchAddress(token))
-      })
-    )
+    legs: plans.map((plan) => plan.leg),
+    strategies: plans.map((plan) => plan.strategy),
+    shipTransactions: plans.map((plan) => plan.shipTransaction),
+    dockTransactions: plans.map((plan) => plan.dockTransaction)
   };
 }
 

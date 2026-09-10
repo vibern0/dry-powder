@@ -63,7 +63,7 @@ describe("Phase 1 reserve lifecycle", function () {
     expect((await dryPowder.getLeg(maker.address, RESERVE_ID, await mLINK.getAddress())).maxSpend).to.equal(ethers.parseUnits("4000", 6));
   });
 
-  it("activates a reserve and prevents later reconfiguration", async function () {
+  it("activates a reserve and prevents recreating it", async function () {
     const { maker, dryPowder, mUSDC, mETH, mLINK } = await loadFixture(deployLifecycleFixture);
     await dryPowder.createReserve(
       RESERVE_ID,
@@ -80,9 +80,37 @@ describe("Phase 1 reserve lifecycle", function () {
 
     expect((await dryPowder.getReserve(maker.address, RESERVE_ID)).active).to.equal(true);
     await expect(dryPowder.addLeg(RESERVE_ID, await mLINK.getAddress(), ethers.parseUnits("4000", 6)))
-      .to.be.revertedWithCustomError(dryPowder, "ReserveAlreadyActive");
+      .to.emit(dryPowder, "LegAdded")
+      .withArgs(maker.address, RESERVE_ID, await mLINK.getAddress(), ethers.parseUnits("4000", 6));
     await expect(dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), ethers.parseUnits("10000", 6), [ethers.parseUnits("10000", 6)], [10000]))
       .to.be.revertedWithCustomError(dryPowder, "ReserveAlreadyExists");
+  });
+
+  it("adds, updates, and removes legs after reserve activation", async function () {
+    const { maker, dryPowder, mUSDC, mETH, mWBTC } = await loadFixture(deployLifecycleFixture);
+    await dryPowder.createReserve(
+      RESERVE_ID,
+      await mUSDC.getAddress(),
+      ethers.parseUnits("10000", 6),
+      [ethers.parseUnits("10000", 6)],
+      [10000]
+    );
+    await dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), ethers.parseUnits("6000", 6));
+    await dryPowder.activateReserve(RESERVE_ID);
+
+    await expect(dryPowder.addLeg(RESERVE_ID, await mWBTC.getAddress(), ethers.parseUnits("5000", 6)))
+      .to.emit(dryPowder, "LegAdded")
+      .withArgs(maker.address, RESERVE_ID, await mWBTC.getAddress(), ethers.parseUnits("5000", 6));
+
+    await expect(dryPowder.updateLeg(RESERVE_ID, await mWBTC.getAddress(), ethers.parseUnits("4500", 6)))
+      .to.emit(dryPowder, "LegUpdated")
+      .withArgs(maker.address, RESERVE_ID, await mWBTC.getAddress(), ethers.parseUnits("4500", 6));
+
+    await expect(dryPowder.removeLeg(RESERVE_ID, await mWBTC.getAddress()))
+      .to.emit(dryPowder, "LegRemoved")
+      .withArgs(maker.address, RESERVE_ID, await mWBTC.getAddress(), 0);
+
+    expect((await dryPowder.getLeg(maker.address, RESERVE_ID, await mWBTC.getAddress())).exists).to.equal(false);
   });
 
   it("keeps the same reserveId isolated for different makers", async function () {
