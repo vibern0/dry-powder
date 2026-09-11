@@ -4,6 +4,7 @@ import {
   createWalletClient,
   custom,
   formatUnits,
+  getAddress,
   http,
   maxUint256,
   parseUnits,
@@ -15,8 +16,9 @@ import {
   type WalletClient
 } from "viem";
 import { sepolia } from "viem/chains";
+import { assetCatalog } from "../assets";
 import { AQUA_ADDRESS, DRY_POWDER_ROUTER, MOCK_ERC20_ABI, ROUTER_ABI, SEPOLIA_CHAIN_ID, TOKENS } from "./constants";
-import { buildFillIntent, buildSetupPlan, buildStrategy, buildStrategyPlan, createReserveId, strategyInputs, usdc, type LegKey } from "./strategy";
+import { buildFillIntent, buildSetupPlan, buildStrategy, buildStrategyPlan, createReserveId, strategyInputs, strategyKeys, usdc, type LegKey, type StrategyPlanInput } from "./strategy";
 import { assertHasSepoliaGas, formatEthBalance } from "./strategy";
 
 export type StepKey =
@@ -65,7 +67,7 @@ export async function connectWallet(): Promise<WalletState> {
   const provider = getProvider();
   const accounts = await provider.request({ method: "eth_requestAccounts" }) as Address[];
   const chainHex = await provider.request({ method: "eth_chainId" }) as Hex;
-  const account = accounts[0];
+  const account = accounts[0] ? getAddress(accounts[0]) : undefined;
   if (!account) throw new Error("No wallet account returned.");
 
   return {
@@ -103,26 +105,29 @@ export async function switchToSepolia() {
 export function getOrCreateMakerSession(account: Address): MakerSession {
   const stored = getStoredMakerSession();
   if (stored) return stored;
+  const maker = getAddress(account);
   const session = {
-    maker: account,
-    reserveId: getOrCreateReserveId(account)
+    maker,
+    reserveId: getOrCreateReserveId(maker)
   };
   saveMakerSession(session);
   return session;
 }
 
 export function createFreshMakerSession(account: Address): MakerSession {
-  const reserveId = createReserveId(account, Date.now().toString());
-  window.localStorage.setItem(reserveStorageKey(account), reserveId);
-  const session = { maker: account, reserveId };
+  const maker = getAddress(account);
+  const reserveId = createReserveId(maker, Date.now().toString());
+  window.localStorage.setItem(reserveStorageKey(maker), reserveId);
+  const session = { maker, reserveId };
   saveMakerSession(session);
   return session;
 }
 
 export function useConnectedAccountAsMaker(account: Address): MakerSession {
+  const maker = getAddress(account);
   const session = {
-    maker: account,
-    reserveId: getOrCreateReserveId(account)
+    maker,
+    reserveId: getOrCreateReserveId(maker)
   };
   saveMakerSession(session);
   return session;
@@ -146,11 +151,11 @@ export async function mintMakerReserveTokens(account: Address, onUpdate: SendUpd
 export async function mintTakerAssetTokens(account: Address, onUpdate: SendUpdate) {
   const { publicClient, walletClient } = makeClients(account);
   assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
-  const mints = [
-    { token: TOKENS.mETH, amount: parseAsset("100", "eth"), label: "100 mETH" },
-    { token: TOKENS.mWBTC, amount: parseAsset("2", "wbtc"), label: "2 mWBTC" },
-    { token: TOKENS.mLINK, amount: parseAsset("100000", "link"), label: "100,000 mLINK" }
-  ];
+  const mints = strategyKeys.map((key) => ({
+    token: strategyInputs[key].asset,
+    amount: strategyInputs[key].takerMintAmount,
+    label: `${assetCatalog.find((asset) => asset.key === key)?.takerMintAmount ?? ""} m${strategyInputs[key].label}`
+  }));
 
   for (const mint of mints) {
     const hash = await walletClient.writeContract({
@@ -180,23 +185,23 @@ export async function createReserve(account: Address, reserveId: Hex, onUpdate: 
     address: DRY_POWDER_ROUTER,
     abi: ROUTER_ABI,
     functionName: "createReserve",
-    args: [reserveId, TOKENS.mUSDC, plan.totalBudget, plan.reserveThresholds, plan.multipliersBps]
+    args: [reserveId, TOKENS.mUSDC, plan.totalBudget]
   });
   onUpdate({ step: "createReserve", message: "Creating Dry Powder reserve", hash });
   await publicClient.waitForTransactionReceipt({ hash });
 }
 
-export async function addLeg(account: Address, reserveId: Hex, key: LegKey, onUpdate: SendUpdate) {
+export async function addLeg(account: Address, reserveId: Hex, key: LegKey, onUpdate: SendUpdate, inputs: StrategyPlanInput = {}) {
   const { publicClient, walletClient } = makeClients(account);
   assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
-  const plan = buildStrategyPlan(account, reserveId, key);
+  const plan = buildStrategyPlan(account, reserveId, key, inputs);
   const hash = await walletClient.writeContract({
     account,
     chain: sepolia,
     address: DRY_POWDER_ROUTER,
     abi: ROUTER_ABI,
     functionName: "addLeg",
-    args: [reserveId, plan.leg.token, plan.leg.maxSpend]
+    args: [reserveId, plan.leg.token, plan.leg.spendCaps, plan.leg.priceBps]
   });
   onUpdate({ step: "addStrategy", message: `Adding ${strategyInputs[key].label} reserve leg`, hash });
   await publicClient.waitForTransactionReceipt({ hash });
@@ -219,44 +224,44 @@ export async function activateReserve(account: Address, reserveId: Hex, onUpdate
 
 export async function createReserveBatch(account: Address, reserveId: Hex, onUpdate: SendUpdate) {
   await createReserve(account, reserveId, onUpdate);
-  for (const key of Object.keys(strategyInputs) as LegKey[]) {
+  for (const key of strategyKeys) {
     await addLeg(account, reserveId, key, onUpdate);
   }
   await activateReserve(account, reserveId, onUpdate);
 }
 
-export async function addStrategy(account: Address, reserveId: Hex, key: LegKey, onUpdate: SendUpdate) {
+export async function addStrategy(account: Address, reserveId: Hex, key: LegKey, onUpdate: SendUpdate, inputs: StrategyPlanInput = {}) {
   const reserve = await readReserve(account, reserveId);
   if (!reserve.exists) {
     await createReserve(account, reserveId, onUpdate);
   }
-  await addLeg(account, reserveId, key, onUpdate);
+  await addLeg(account, reserveId, key, onUpdate, inputs);
   if (!reserve.active) {
     await activateReserve(account, reserveId, onUpdate);
   }
-  await shipStrategy(account, reserveId, key, onUpdate);
+  await shipStrategy(account, reserveId, key, onUpdate, inputs);
 }
 
-export async function editStrategy(account: Address, reserveId: Hex, key: LegKey, maxSpend: string, onUpdate: SendUpdate) {
+export async function editStrategy(account: Address, reserveId: Hex, key: LegKey, ladder: StrategyPlanInput["ladder"], onUpdate: SendUpdate) {
   const { publicClient, walletClient } = makeClients(account);
   assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
-  const plan = buildStrategyPlan(account, reserveId, key);
+  const plan = buildStrategyPlan(account, reserveId, key, { ladder });
   const hash = await walletClient.writeContract({
     account,
     chain: sepolia,
     address: DRY_POWDER_ROUTER,
     abi: ROUTER_ABI,
     functionName: "updateLeg",
-    args: [reserveId, plan.leg.token, usdc(maxSpend)]
+    args: [reserveId, plan.leg.token, plan.leg.spendCaps, plan.leg.priceBps]
   });
   onUpdate({ step: "editStrategy", message: `Updating ${strategyInputs[key].label} max spend`, hash });
   await publicClient.waitForTransactionReceipt({ hash });
 }
 
-export async function shipStrategy(account: Address, reserveId: Hex, key: LegKey, onUpdate: SendUpdate) {
+export async function shipStrategy(account: Address, reserveId: Hex, key: LegKey, onUpdate: SendUpdate, inputs: StrategyPlanInput = {}) {
   const { publicClient, walletClient } = makeClients(account);
   assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
-  const transaction = buildStrategyPlan(account, reserveId, key).shipTransaction;
+  const transaction = buildStrategyPlan(account, reserveId, key, inputs).shipTransaction;
   const hash = await walletClient.sendTransaction({
     account,
     chain: sepolia,
@@ -304,7 +309,7 @@ async function removeLeg(account: Address, reserveId: Hex, key: LegKey, onUpdate
   await publicClient.waitForTransactionReceipt({ hash });
 }
 
-export async function quoteStrategies(maker: Address, reserveId: Hex, keys: LegKey[] = ["eth", "wbtc", "link"]) {
+export async function quoteStrategies(maker: Address, reserveId: Hex, keys: LegKey[] = strategyKeys) {
   const { publicClient } = makeClients();
   const quotes = await Promise.all(
     keys.map(async (key) => {
@@ -354,18 +359,19 @@ export async function readOnchainSnapshot(account: Address, reserveId: Hex) {
     functionName: "getReserve",
     args: [account, reserveId]
   });
-  const [ethLeg, wbtcLeg, linkLeg] = await Promise.all(
-    ([TOKENS.mETH, TOKENS.mWBTC, TOKENS.mLINK] as const).map((token) =>
+  const legValues = await Promise.all(
+    strategyKeys.map((key) =>
       publicClient.readContract({
         address: DRY_POWDER_ROUTER,
         abi: ROUTER_ABI,
         functionName: "getLeg",
-        args: [account, reserveId, token]
+        args: [account, reserveId, strategyInputs[key].asset]
       })
     )
   );
-  const [mUSDC, mETH, mWBTC, mLINK] = await Promise.all(
-    ([TOKENS.mUSDC, TOKENS.mETH, TOKENS.mWBTC, TOKENS.mLINK] as const).map((token) =>
+  const balanceTokens = [TOKENS.mUSDC, ...strategyKeys.map((key) => strategyInputs[key].asset)];
+  const balanceValues = await Promise.all(
+    balanceTokens.map((token) =>
       publicClient.readContract({
         address: token,
         abi: MOCK_ERC20_ABI,
@@ -378,8 +384,8 @@ export async function readOnchainSnapshot(account: Address, reserveId: Hex) {
 
   return {
     reserve,
-    legs: { eth: ethLeg, wbtc: wbtcLeg, link: linkLeg },
-    balances: { mUSDC, mETH, mWBTC, mLINK },
+    legs: Object.fromEntries(strategyKeys.map((key, index) => [key, legValues[index]])) as Record<LegKey, (typeof legValues)[number]>,
+    balances: Object.fromEntries(balanceTokens.map((token, index) => [token, balanceValues[index]])),
     shipped
   };
 }
@@ -447,7 +453,7 @@ function getStoredMakerSession(): MakerSession | null {
   try {
     const parsed = JSON.parse(stored) as MakerSession;
     if (parsed.maker?.startsWith("0x") && parsed.reserveId?.startsWith("0x") && parsed.reserveId.length === 66) {
-      return parsed;
+      return { maker: getAddress(parsed.maker), reserveId: parsed.reserveId };
     }
   } catch {
     return null;
@@ -457,12 +463,11 @@ function getStoredMakerSession(): MakerSession | null {
 }
 
 function saveMakerSession(session: MakerSession) {
-  window.localStorage.setItem("dry-powder.maker-session", JSON.stringify(session));
+  window.localStorage.setItem("dry-powder.maker-session", JSON.stringify({ ...session, maker: getAddress(session.maker) }));
 }
 
 async function readShippedStrategies(publicClient: PublicClient, account: Address, reserveId: Hex) {
-  const keys = ["eth", "wbtc", "link"] as const;
-  const strategies = keys.map((key) => buildStrategy(key, account, reserveId));
+  const strategies = strategyKeys.map((key) => buildStrategy(key, account, reserveId));
   const balances = await Promise.all(
     strategies.map((strategy) =>
       publicClient.readContract({
@@ -474,9 +479,9 @@ async function readShippedStrategies(publicClient: PublicClient, account: Addres
     )
   );
 
-  return Object.fromEntries(balances.map(([, tokensCount], index) => [keys[index], tokensCount > 0 && tokensCount !== 255])) as Record<LegKey, boolean>;
+  return Object.fromEntries(balances.map(([, tokensCount], index) => [strategyKeys[index], tokensCount > 0 && tokensCount !== 255])) as Record<LegKey, boolean>;
 }
 
 function reserveStorageKey(account: Address) {
-  return `dry-powder.reserve-id.${account.toLowerCase()}`;
+  return `dry-powder.reserve-id.${getAddress(account)}`;
 }

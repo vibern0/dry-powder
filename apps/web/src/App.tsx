@@ -1,6 +1,17 @@
-import { ArrowRight, Check, Coins, Droplets, Gauge, RotateCcw, Trash2, Wallet } from "lucide-react";
+import { ArrowRight, Check, Coins, Droplets, Gauge, Plus, RotateCcw, Settings, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { formatUsd, initialDemo, selectTranche, summarizeReserve, type DemoState, type Leg, type LegKey } from "./demoModel";
+import {
+  formatUsd,
+  getFillAmountDefault,
+  getStrategyDraftDefaults,
+  initialDemo,
+  selectLadderRow,
+  summarizeReserve,
+  type DemoState,
+  type Leg,
+  type LegKey,
+  type StrategyDraft
+} from "./demoModel";
 import {
   addStrategy,
   approveAqua,
@@ -23,9 +34,9 @@ import {
   type WalletState
 } from "./onchain/client";
 import { SEPOLIA_CHAIN_ID } from "./onchain/constants";
-import { roleForAccount, strategyInputs } from "./onchain/strategy";
+import { roleForAccount, strategyInputs, strategyKeys } from "./onchain/strategy";
 
-type DemoPage = "maker" | "taker";
+type DemoPage = "maker" | "taker" | "setup";
 
 const setupSteps: Array<{ key: StepKey; label: string }> = [
   { key: "mint", label: "Mint maker mUSDC" },
@@ -39,6 +50,8 @@ const txRows = [
   ["Mode", "Live Sepolia"]
 ];
 
+const firstStrategyKey = strategyKeys[0];
+
 export function App() {
   const [state, setState] = useState<DemoState>(initialDemo);
   const [wallet, setWallet] = useState<WalletState | null>(null);
@@ -49,20 +62,18 @@ export function App() {
   const [quotes, setQuotes] = useState<Record<LegKey, string> | null>(null);
   const [page, setPage] = useState<DemoPage>("maker");
   const [activeLegKeys, setActiveLegKeys] = useState<LegKey[]>([]);
-  const [newStrategyAsset, setNewStrategyAsset] = useState<LegKey>("eth");
-  const [editMaxSpend, setEditMaxSpend] = useState<Record<LegKey, string>>({ eth: "6000", wbtc: "6000", link: "4000" });
-  const [fillAsset, setFillAsset] = useState<LegKey>("eth");
+  const [strategyModalOpen, setStrategyModalOpen] = useState(false);
+  const [strategyDraft, setStrategyDraft] = useState<StrategyDraft>(() => getStrategyDraftDefaults(firstStrategyKey));
+  const [fillAsset, setFillAsset] = useState<LegKey>(firstStrategyKey);
   const [fillAmount, setFillAmount] = useState("4000");
   const [error, setError] = useState<string | null>(null);
   const reserveCreated = Boolean(completed.createReserve);
   const strategiesActive = activeLegKeys.length > 0;
   const visibleState = strategiesActive ? { ...state, legs: state.legs.filter((leg) => activeLegKeys.includes(leg.key)) } : { ...state, legs: [] };
   const summary = useMemo(() => summarizeReserve(visibleState), [visibleState]);
-  const tranche = selectTranche(state.reserve);
   const wrongNetwork = wallet && wallet.chainId !== SEPOLIA_CHAIN_ID;
   const role = wallet ? roleForAccount(wallet.account, makerSession?.maker ?? null) : "maker";
   const reserveId = makerSession?.reserveId;
-  const strategyKeys = Object.keys(strategyInputs) as LegKey[];
   const availableStrategyKeys = strategyKeys.filter((key) => !activeLegKeys.includes(key));
   const fillableStrategyKeys = activeLegKeys.length ? activeLegKeys : strategyKeys;
 
@@ -127,17 +138,17 @@ export function App() {
 
   async function loadSnapshot(target: MakerSession) {
     const snapshot = await readOnchainSnapshot(target.maker, target.reserveId);
-    setState(applySnapshot(snapshot.reserve.spent, snapshot.legs));
+    setState(applySnapshot(snapshot.reserve, snapshot.legs));
     const nextActiveLegKeys = strategyKeys.filter((key) => snapshot.legs[key].exists && snapshot.shipped[key]);
     const nextAvailableLegKeys = strategyKeys.filter((key) => !nextActiveLegKeys.includes(key));
     setActiveLegKeys(nextActiveLegKeys);
-    setFillAsset((current) => nextActiveLegKeys.includes(current) || nextActiveLegKeys.length === 0 ? current : nextActiveLegKeys[0]);
-    setNewStrategyAsset((current) => nextActiveLegKeys.includes(current) ? nextAvailableLegKeys[0] ?? current : current);
-    setEditMaxSpend({
-      eth: formatTokenAmount(snapshot.legs.eth.maxSpend),
-      wbtc: formatTokenAmount(snapshot.legs.wbtc.maxSpend),
-      link: formatTokenAmount(snapshot.legs.link.maxSpend)
+    setFillAsset((current) => {
+      if (nextActiveLegKeys.includes(current) || nextActiveLegKeys.length === 0) return current;
+      const nextAsset = nextActiveLegKeys[0];
+      setFillAmount(getFillAmountDefault(nextAsset));
+      return nextAsset;
     });
+    setStrategyDraft((current) => nextActiveLegKeys.includes(current.asset) ? getStrategyDraftDefaults(nextAvailableLegKeys[0] ?? current.asset) : current);
     setCompleted((previous) => ({
       ...previous,
       createReserve: snapshot.reserve.exists,
@@ -178,10 +189,31 @@ export function App() {
     });
   }
 
-  async function addSelectedStrategy() {
+  function openStrategyModal() {
+    const asset = availableStrategyKeys.includes(strategyDraft.asset) ? strategyDraft.asset : availableStrategyKeys[0];
+    if (!asset) return;
+    setStrategyDraft(getStrategyDraftDefaults(asset));
+    setStrategyModalOpen(true);
+  }
+
+  function updateStrategyDraftAsset(asset: LegKey) {
+    setStrategyDraft(getStrategyDraftDefaults(asset));
+  }
+
+  function updateFillAsset(asset: LegKey) {
+    setFillAsset(asset);
+    setFillAmount(getFillAmountDefault(asset));
+  }
+
+  async function addSelectedStrategy(draft: StrategyDraft) {
     if (!wallet || !makerSession || !isMakerRole) return;
     await run("addStrategy", async () => {
-      await addStrategy(wallet.account, makerSession.reserveId, newStrategyAsset, pushEvent);
+      await addStrategy(wallet.account, makerSession.reserveId, draft.asset, pushEvent, {
+        ladder: draft.ladder
+      });
+      setFillAsset(draft.asset);
+      setFillAmount(getFillAmountDefault(draft.asset));
+      setStrategyModalOpen(false);
       await loadSnapshot(makerSession);
     });
   }
@@ -189,7 +221,7 @@ export function App() {
   async function updateSelectedStrategy(key: LegKey) {
     if (!wallet || !makerSession || !isMakerRole) return;
     await run("editStrategy", async () => {
-      await editStrategy(wallet.account, makerSession.reserveId, key, editMaxSpend[key], pushEvent);
+      await editStrategy(wallet.account, makerSession.reserveId, key, strategyInputs[key].ladder, pushEvent);
       await loadSnapshot(makerSession);
     });
   }
@@ -251,12 +283,13 @@ export function App() {
           {error ? <div className="error-banner">{error}</div> : null}
         </div>
 
-        <ReserveCard summary={summary} tranche={tranche} active={Boolean(makerSession) && reserveCreated} />
+        <ReserveCard summary={summary} active={Boolean(makerSession) && reserveCreated} />
       </section>
 
-      <section className="workspace-grid">
+      {page === "setup" ? (
+      <section className="setup-page-grid">
         <div className="setup-column">
-          <PanelTitle icon={<Wallet size={18} />} title={page === "maker" ? "Maker Page" : "Taker Page"} />
+          <PanelTitle icon={<Settings size={18} />} title="Wallet & Network" />
           {!wallet ? (
             <button className="wide-action" onClick={connect} disabled={!hasInjectedWallet() || pending !== null}>
               {pending === "connect" ? "Connecting..." : hasInjectedWallet() ? "Connect wallet" : "No wallet found"}
@@ -271,41 +304,20 @@ export function App() {
             </div>
           )}
           <RolePanel wallet={wallet} makerSession={makerSession} onSync={connect} onUseAsMaker={setConnectedAsMaker} pending={pending} />
-          {page === "maker" ? (
-            <div className="step-list">
-              {setupSteps.map((step) => (
-                <button className="step-row" key={step.key} onClick={() => runSetupStep(step.key)} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || pending !== null || isStepDisabled(step.key, completed)}>
-                  <span className="step-icon">
-                    {completed[step.key] ? <Check size={14} /> : pending === step.key ? "·" : ""}
-                  </span>
-                  <span>{pending === step.key ? "Confirm in wallet..." : step.label}</span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="step-list">
-              <button className="step-row" onClick={() => runSetupStep("mintTaker")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || pending !== null}>
-                <span className="step-icon">{completed.mintTaker ? <Check size={14} /> : pending === "mintTaker" ? "·" : ""}</span>
-                <span>{pending === "mintTaker" ? "Confirm in wallet..." : "Mint taker assets"}</span>
+          <div className="step-list">
+            {setupSteps.map((step) => (
+              <button className="step-row" key={step.key} onClick={() => runSetupStep(step.key)} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || pending !== null || isStepDisabled(step.key, completed)}>
+                <span className="step-icon">
+                  {completed[step.key] ? <Check size={14} /> : pending === step.key ? "·" : ""}
+                </span>
+                <span>{pending === step.key ? "Confirm in wallet..." : step.label}</span>
               </button>
-              <label className="field-label" htmlFor="fill-asset">Fill asset</label>
-              <select id="fill-asset" className="select-input" value={fillAsset} onChange={(event) => setFillAsset(event.target.value as LegKey)} disabled={!strategiesActive}>
-                {fillableStrategyKeys.map((key) => (
-                  <option value={key} key={key}>{strategyInputs[key].label}</option>
-                ))}
-              </select>
-              <label className="field-label" htmlFor="fill-amount">mUSDC amount</label>
-              <input id="fill-amount" className="text-input" value={fillAmount} onChange={(event) => setFillAmount(event.target.value)} inputMode="decimal" />
-              <button className="step-row" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesActive || pending !== null}>
-                <span className="step-icon">{pending === "quote" ? "·" : ""}</span>
-                <span>{pending === "quote" ? "Confirm in wallet..." : "Quote all strategies"}</span>
-              </button>
-              <button className="step-row primary-step" onClick={() => runSetupStep("fill")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || !strategiesActive || pending !== null || !fillAmount}>
-                <span className="step-icon">{completed.fill ? <Check size={14} /> : pending === "fill" ? "·" : ""}</span>
-                <span>{pending === "fill" ? "Confirm in wallet..." : `Execute ${strategyInputs[fillAsset].label} fill`}</span>
-              </button>
-            </div>
-          )}
+            ))}
+            <button className="step-row" onClick={() => runSetupStep("mintTaker")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || pending !== null}>
+              <span className="step-icon">{completed.mintTaker ? <Check size={14} /> : pending === "mintTaker" ? "·" : ""}</span>
+              <span>{pending === "mintTaker" ? "Confirm in wallet..." : "Mint taker assets"}</span>
+            </button>
+          </div>
 
           <div className="network-card">
             {txRows.map(([label, value]) => (
@@ -320,29 +332,46 @@ export function App() {
             </div>
           </div>
         </div>
+        <ActivityPanel eventLog={eventLog} />
+      </section>
+      ) : (
+      <section className="workspace-grid content-grid">
 
         <div className="legs-column">
-          <PanelTitle icon={<Coins size={18} />} title="Aqua Strategies" />
+          <PanelTitle icon={<Coins size={18} />} title={page === "maker" ? "Maker Strategies" : "Taker Fills"} />
           <div className="strategy-actions">
             {page === "maker" ? (
-              <>
-                <select className="compact-select" value={newStrategyAsset} onChange={(event) => setNewStrategyAsset(event.target.value as LegKey)} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || availableStrategyKeys.length === 0 || pending !== null}>
-                  {availableStrategyKeys.map((key) => (
-                    <option value={key} key={key}>{strategyInputs[key].label}</option>
-                  ))}
-                </select>
-                <button className="secondary-action" onClick={addSelectedStrategy} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || pending !== null || availableStrategyKeys.length === 0}>
-                  {pending === "addStrategy" ? "Adding..." : "+ Add"}
-                </button>
-              </>
+              <button className="secondary-action" onClick={openStrategyModal} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || pending !== null || availableStrategyKeys.length === 0}>
+                <Plus size={15} />
+                {pending === "addStrategy" ? "Adding..." : "Add strategy"}
+              </button>
             ) : null}
-            <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesActive || pending !== null}>
-              {pending === "quote" ? "Quoting..." : "Quote all"}
-            </button>
             <button className="secondary-action" onClick={refresh} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
               {pending === "refresh" ? "Refreshing..." : "Refresh"}
             </button>
           </div>
+          {page === "taker" ? (
+            <div className="fill-panel">
+              <label>
+                <span>Fill asset</span>
+                <select className="select-input" value={fillAsset} onChange={(event) => updateFillAsset(event.target.value as LegKey)} disabled={!strategiesActive}>
+                  {fillableStrategyKeys.map((key) => (
+                    <option value={key} key={key}>{strategyInputs[key].label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>mUSDC amount</span>
+                <input className="text-input" value={fillAmount} onChange={(event) => setFillAmount(event.target.value)} inputMode="decimal" />
+              </label>
+              <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesActive || pending !== null}>
+                {pending === "quote" ? "Quoting..." : "Refresh quotes"}
+              </button>
+              <button className="secondary-action primary-inline" onClick={() => runSetupStep("fill")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || !strategiesActive || pending !== null || !fillAmount}>
+                {pending === "fill" ? "Confirming..." : `Fill ${strategyInputs[fillAsset].label}`}
+              </button>
+            </div>
+          ) : null}
           {strategiesActive ? (
             <div className="leg-grid">
               {visibleState.legs.map((leg) => (
@@ -352,9 +381,7 @@ export function App() {
                   quote={quotes?.[leg.key]}
                   active={leg.key === fillAsset && Boolean(completed.fill)}
                   editable={page === "maker"}
-                  maxSpendValue={editMaxSpend[leg.key]}
                   pending={pending}
-                  onMaxSpendChange={(value) => setEditMaxSpend((previous) => ({ ...previous, [leg.key]: value }))}
                   onEdit={() => updateSelectedStrategy(leg.key)}
                   onDelete={() => deleteSelectedStrategy(leg.key)}
                 />
@@ -368,22 +395,20 @@ export function App() {
           )}
         </div>
 
-        <div className="events-column">
-          <PanelTitle icon={<Gauge size={18} />} title="Quote Story" />
-          <div className="event-list">
-            {(eventLog.length ? eventLog.map(formatEvent) : ["Connect wallet to begin the live Sepolia demo."]).map((event) => (
-              <div className="event-row" key={event}>
-                <ArrowRight size={15} />
-                <span>{event}</span>
-              </div>
-            ))}
-          </div>
-          <div className="next-card">
-            <span>Integration</span>
-            <strong>viem wallet writes, DryPowderRouter reads, Aqua SDK ship and dock calldata.</strong>
-          </div>
-        </div>
+        <ActivityPanel eventLog={eventLog} />
       </section>
+      )}
+      {strategyModalOpen ? (
+        <StrategyModal
+          draft={strategyDraft}
+          availableStrategyKeys={availableStrategyKeys}
+          pending={pending}
+          onAssetChange={updateStrategyDraftAsset}
+          onChange={setStrategyDraft}
+          onClose={() => setStrategyModalOpen(false)}
+          onSubmit={addSelectedStrategy}
+        />
+      ) : null}
     </main>
   );
 }
@@ -416,6 +441,7 @@ function TopNav({
       <div className="nav-links" aria-label="Demo pages">
         <button className={page === "maker" ? "selected-pill" : ""} onClick={() => onPageChange("maker")}>Maker</button>
         <button className={page === "taker" ? "selected-pill" : ""} onClick={() => onPageChange("taker")}>Taker</button>
+        <button className={page === "setup" ? "selected-pill" : ""} onClick={() => onPageChange("setup")}>Setup</button>
       </div>
       <div className="nav-actions">
         <button className="icon-action" onClick={onResetReserve} aria-label="Create fresh reserve id" title="Create fresh reserve id" disabled={!canResetReserve}>
@@ -475,24 +501,126 @@ function RolePanel({
   );
 }
 
-function applySnapshot(spent: bigint, legs: Record<LegKey, { maxSpend: bigint; spent: bigint }>): DemoState {
-  const spentNumber = Number(spent) / 1_000_000;
-  const reserve = { ...initialDemo.reserve, spent: spentNumber };
-  const activeTranche = selectTranche(reserve);
+function applySnapshot(reserveSnapshot: { totalBudget: bigint; spent: bigint }, legs: Record<LegKey, { maxSpend: bigint; spent: bigint }>): DemoState {
   return {
     ...initialDemo,
-    reserve,
-    legs: initialDemo.legs.map((leg) => ({
-      ...leg,
-      maxSpend: Number(legs[leg.key].maxSpend) / 1_000_000,
-      spent: Number(legs[leg.key].spent) / 1_000_000,
-      currentMaxPrice: (leg.baseMaxPrice * activeTranche.multiplierBps) / 10000
-    })),
+    reserve: {
+      totalBudget: Number(reserveSnapshot.totalBudget) / 1_000_000,
+      spent: Number(reserveSnapshot.spent) / 1_000_000
+    },
+    legs: initialDemo.legs.map((leg) => {
+      const spent = Number(legs[leg.key].spent) / 1_000_000;
+      const nextLeg = {
+        ...leg,
+        maxSpend: Number(legs[leg.key].maxSpend) / 1_000_000,
+        spent
+      };
+      return {
+        ...nextLeg,
+        currentMaxPrice: selectLadderRow(nextLeg).entryPrice
+      };
+    }),
     eventLog: initialDemo.eventLog
   };
 }
 
-function ReserveCard({ summary, tranche, active }: { summary: ReturnType<typeof summarizeReserve>; tranche: ReturnType<typeof selectTranche>; active: boolean }) {
+function ActivityPanel({ eventLog }: { eventLog: TransactionUpdate[] }) {
+  return (
+    <div className="events-column">
+      <PanelTitle icon={<Gauge size={18} />} title="Quote Story" />
+      <div className="event-list">
+        {(eventLog.length ? eventLog.map(formatEvent) : ["Connect wallet to begin the live Sepolia demo."]).map((event) => (
+          <div className="event-row" key={event}>
+            <ArrowRight size={15} />
+            <span>{event}</span>
+          </div>
+        ))}
+      </div>
+      <div className="next-card">
+        <span>Integration</span>
+        <strong>viem wallet writes, DryPowderRouter reads, Aqua SDK ship and dock calldata.</strong>
+      </div>
+    </div>
+  );
+}
+
+function StrategyModal({
+  draft,
+  availableStrategyKeys,
+  pending,
+  onAssetChange,
+  onChange,
+  onClose,
+  onSubmit
+}: {
+  draft: StrategyDraft;
+  availableStrategyKeys: LegKey[];
+  pending: StepKey | "connect" | "switch" | "refresh" | null;
+  onAssetChange: (asset: LegKey) => void;
+  onChange: (draft: StrategyDraft) => void;
+  onClose: () => void;
+  onSubmit: (draft: StrategyDraft) => void;
+}) {
+  const disabled = pending !== null || draft.ladder.some((row) => !row.entryPrice || !row.maxSpend);
+
+  function updateRow(index: number, field: "entryPrice" | "maxSpend", value: string) {
+    onChange({
+      ...draft,
+      ladder: draft.ladder.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row)
+    });
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form
+        className="strategy-modal"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit(draft);
+        }}
+      >
+        <div className="modal-header">
+          <div>
+            <span>Add strategy</span>
+            <h2>{strategyInputs[draft.asset].label}</h2>
+          </div>
+          <button type="button" className="icon-action" onClick={onClose} aria-label="Close strategy form" disabled={pending !== null}>
+            <X size={18} />
+          </button>
+        </div>
+        <label className="modal-field">
+          <span>Asset</span>
+          <select className="select-input" value={draft.asset} onChange={(event) => onAssetChange(event.target.value as LegKey)} disabled={pending !== null}>
+            {availableStrategyKeys.map((key) => (
+              <option value={key} key={key}>{strategyInputs[key].label}</option>
+            ))}
+          </select>
+        </label>
+        <div className="ladder-editor">
+          {draft.ladder.map((row, index) => (
+            <div className="ladder-editor-row" key={index}>
+              <span>Level {index + 1}</span>
+              <label>
+                <span>Entry price</span>
+                <input className="text-input" value={row.entryPrice} onChange={(event) => updateRow(index, "entryPrice", event.target.value)} inputMode="decimal" />
+              </label>
+              <label>
+                <span>Max spend</span>
+                <input className="text-input" value={row.maxSpend} onChange={(event) => updateRow(index, "maxSpend", event.target.value)} inputMode="decimal" />
+              </label>
+            </div>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="secondary-action" onClick={onClose} disabled={pending !== null}>Cancel</button>
+          <button type="submit" className="primary-action" disabled={disabled}>{pending === "addStrategy" ? "Adding..." : "Add strategy"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ReserveCard({ summary, active }: { summary: ReturnType<typeof summarizeReserve>; active: boolean }) {
   if (!active) {
     return (
       <div className="reserve-card empty-reserve">
@@ -518,10 +646,6 @@ function ReserveCard({ summary, tranche, active }: { summary: ReturnType<typeof 
             <span>Overcommit</span>
             <strong>--</strong>
           </div>
-          <div>
-            <span>Active price</span>
-            <strong>--</strong>
-          </div>
         </div>
       </div>
     );
@@ -534,7 +658,7 @@ function ReserveCard({ summary, tranche, active }: { summary: ReturnType<typeof 
     <div className="reserve-card">
       <div className="reserve-header">
         <span>Reserve overview</span>
-        <strong>{tranche.label}</strong>
+        <strong>Live</strong>
       </div>
       <div className="reserve-main">
         <span>{formatUsd(summary.spent)}</span>
@@ -557,10 +681,6 @@ function ReserveCard({ summary, tranche, active }: { summary: ReturnType<typeof 
         <div>
           <span>Overcommit</span>
           <strong>{summary.overcommitment.toFixed(1)}x</strong>
-        </div>
-        <div>
-          <span>Active price</span>
-          <strong>{(tranche.multiplierBps / 100).toFixed(0)}%</strong>
         </div>
       </div>
       <div className="remaining-band" style={{ width: `${remainingPercent}%` }} />
@@ -588,9 +708,7 @@ function LegCard({
   quote,
   active,
   editable,
-  maxSpendValue,
   pending,
-  onMaxSpendChange,
   onEdit,
   onDelete
 }: {
@@ -598,9 +716,7 @@ function LegCard({
   quote?: string;
   active: boolean;
   editable: boolean;
-  maxSpendValue: string;
   pending: StepKey | "connect" | "switch" | "refresh" | null;
-  onMaxSpendChange: (value: string) => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -624,6 +740,14 @@ function LegCard({
       </div>
       {quote ? <div className="live-quote">{quote}</div> : null}
       {changed ? <div className="repriced">Repriced from {formatUsd(leg.baseMaxPrice)}</div> : <div className="repriced muted">Initial quote</div>}
+      <div className="card-ladder">
+        {leg.ladder.map((row, index) => (
+          <div className={selectLadderRow(leg) === row ? "active" : ""} key={`${leg.key}-${index}`}>
+            <span>{formatUsd(row.entryPrice)}</span>
+            <strong>{formatUsd(row.maxSpend)}</strong>
+          </div>
+        ))}
+      </div>
       <div className="leg-meter">
         <span style={{ width: `${utilization}%`, background: leg.allocationColor }} />
       </div>
@@ -633,8 +757,7 @@ function LegCard({
       </div>
       {editable ? (
         <div className="card-actions">
-          <input className="mini-input" aria-label={`${leg.symbol} max spend`} value={maxSpendValue} onChange={(event) => onMaxSpendChange(event.target.value)} inputMode="decimal" />
-          <button className="mini-action" onClick={onEdit} disabled={pending !== null || !maxSpendValue}>Edit</button>
+          <button className="mini-action" onClick={onEdit} disabled={pending !== null}>Reset</button>
           <button className="mini-action danger" onClick={onDelete} disabled={pending !== null}>
             <Trash2 size={14} />
           </button>

@@ -8,9 +8,9 @@ const USDC_10K = ethers.parseUnits("10000", 6);
 const USDC_7500 = ethers.parseUnits("7500", 6);
 const USDC_6000 = ethers.parseUnits("6000", 6);
 const USDC_4000 = ethers.parseUnits("4000", 6);
-const USDC_3500 = ethers.parseUnits("3500", 6);
 const USDC_2500 = ethers.parseUnits("2500", 6);
 const USDC_ONE = ethers.parseUnits("1", 6);
+const FULL_PRICE = [10000];
 
 async function deployInvariantFixture() {
   const [owner, maker, taker, recipient] = await ethers.getSigners();
@@ -37,16 +37,10 @@ async function deployInvariantFixture() {
   await mWBTC.connect(taker).approve(await router.getAddress(), ethers.MaxUint256);
   await mLINK.connect(taker).approve(await router.getAddress(), ethers.MaxUint256);
 
-  await router.connect(maker).createReserve(
-    RESERVE_ID,
-    await mUSDC.getAddress(),
-    USDC_10K,
-    [USDC_4000, USDC_7500, USDC_10K],
-    [10000, 9500, 9000]
-  );
-  await router.connect(maker).addLeg(RESERVE_ID, await mETH.getAddress(), USDC_6000);
-  await router.connect(maker).addLeg(RESERVE_ID, await mWBTC.getAddress(), USDC_6000);
-  await router.connect(maker).addLeg(RESERVE_ID, await mLINK.getAddress(), USDC_4000);
+  await router.connect(maker).createReserve(RESERVE_ID, await mUSDC.getAddress(), USDC_10K);
+  await router.connect(maker).addLeg(RESERVE_ID, await mETH.getAddress(), [USDC_4000, USDC_6000], [10000, 9500]);
+  await router.connect(maker).addLeg(RESERVE_ID, await mWBTC.getAddress(), [USDC_4000, USDC_6000], [10000, 9500]);
+  await router.connect(maker).addLeg(RESERVE_ID, await mLINK.getAddress(), [USDC_4000], FULL_PRICE);
   await router.connect(maker).activateReserve(RESERVE_ID);
 
   const reserveToken = await mUSDC.getAddress();
@@ -121,31 +115,31 @@ describe("Phase 5 Dry Powder invariants and tranches", function () {
     expectWithinOneBaseUnit((await quoteExactOut(fixture, fixture.strategies.link, ethers.parseUnits("200", 6)))[0], ethers.parseEther("10"));
   });
 
-  it("moves sibling quotes to the 95% tranche after one leg fills", async function () {
+  it("keeps sibling quotes independent after one leg fills", async function () {
     const fixture = await loadFixture(deployInvariantFixture);
 
     await fillExactOut(fixture, fixture.strategies.eth, USDC_4000);
 
-    expectWithinOneBaseUnit((await quoteExactOut(fixture, fixture.strategies.wbtc, ethers.parseUnits("760", 6)))[0], ethers.parseUnits("0.01", 8));
-    expectWithinOneBaseUnit((await quoteExactOut(fixture, fixture.strategies.link, ethers.parseUnits("190", 6)))[0], ethers.parseEther("10"));
+    expectWithinOneBaseUnit((await quoteExactOut(fixture, fixture.strategies.wbtc, ethers.parseUnits("800", 6)))[0], ethers.parseUnits("0.01", 8));
+    expectWithinOneBaseUnit((await quoteExactOut(fixture, fixture.strategies.link, ethers.parseUnits("200", 6)))[0], ethers.parseEther("10"));
   });
 
-  it("enforces piecewise tranche boundaries and multipliers", async function () {
+  it("enforces per-leg ladder boundaries", async function () {
     const fixture = await loadFixture(deployInvariantFixture);
 
     expect((await quoteExactOut(fixture, fixture.strategies.eth, USDC_4000))[1]).to.equal(USDC_4000);
     await expectExactOutOverCapacityReverts(fixture, fixture.strategies.eth, USDC_4000 + USDC_ONE);
     await fillExactOut(fixture, fixture.strategies.eth, USDC_4000);
 
-    expectWithinOneBaseUnit((await quoteExactOut(fixture, fixture.strategies.wbtc, ethers.parseUnits("760", 6)))[0], ethers.parseUnits("0.01", 8));
-    expect((await quoteExactOut(fixture, fixture.strategies.wbtc, USDC_3500))[1]).to.equal(USDC_3500);
-    await expectExactOutOverCapacityReverts(fixture, fixture.strategies.wbtc, USDC_3500 + USDC_ONE);
-    await fillExactOut(fixture, fixture.strategies.wbtc, USDC_3500);
+    expectWithinOneBaseUnit((await quoteExactOut(fixture, fixture.strategies.wbtc, ethers.parseUnits("800", 6)))[0], ethers.parseUnits("0.01", 8));
+    expect((await quoteExactOut(fixture, fixture.strategies.wbtc, USDC_4000))[1]).to.equal(USDC_4000);
+    await expectExactOutOverCapacityReverts(fixture, fixture.strategies.wbtc, USDC_4000 + USDC_ONE);
+    await fillExactOut(fixture, fixture.strategies.wbtc, USDC_4000);
 
-    expectWithinOneBaseUnit((await quoteExactOut(fixture, fixture.strategies.link, ethers.parseUnits("180", 6)))[0], ethers.parseEther("10"));
-    expect((await quoteExactOut(fixture, fixture.strategies.link, USDC_2500))[1]).to.equal(USDC_2500);
-    await expectExactOutOverCapacityReverts(fixture, fixture.strategies.link, USDC_2500 + USDC_ONE);
-    await fillExactOut(fixture, fixture.strategies.link, USDC_2500);
+    expect((await quoteExactOut(fixture, fixture.strategies.wbtc, ethers.parseUnits("760", 6)))[1]).to.equal(ethers.parseUnits("760", 6));
+    expect((await quoteExactOut(fixture, fixture.strategies.link, ethers.parseUnits("2000", 6)))[1]).to.equal(ethers.parseUnits("2000", 6));
+    await expectExactOutOverCapacityReverts(fixture, fixture.strategies.link, ethers.parseUnits("2000.000001", 6));
+    await fillExactOut(fixture, fixture.strategies.link, ethers.parseUnits("2000", 6));
 
     expect((await fixture.router.getReserve(fixture.maker.address, RESERVE_ID)).spent).to.equal(USDC_10K);
     await expectExactOutOverCapacityReverts(fixture, fixture.strategies.eth, USDC_ONE);
@@ -155,8 +149,8 @@ describe("Phase 5 Dry Powder invariants and tranches", function () {
     const aggregateFixture = await loadFixture(deployInvariantFixture);
 
     await fillExactOut(aggregateFixture, aggregateFixture.strategies.eth, USDC_4000);
-    await fillExactOut(aggregateFixture, aggregateFixture.strategies.wbtc, USDC_3500);
-    await fillExactOut(aggregateFixture, aggregateFixture.strategies.link, USDC_2500);
+    await fillExactOut(aggregateFixture, aggregateFixture.strategies.wbtc, USDC_4000);
+    await fillExactOut(aggregateFixture, aggregateFixture.strategies.link, ethers.parseUnits("2000", 6));
     expect((await aggregateFixture.router.getReserve(aggregateFixture.maker.address, RESERVE_ID)).spent).to.equal(USDC_10K);
     await expectExactOutOverCapacityReverts(aggregateFixture, aggregateFixture.strategies.eth, USDC_ONE);
 

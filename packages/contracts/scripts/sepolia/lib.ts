@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
-import { BytesLike, Signer, Wallet } from "ethers";
+import { BytesLike, NonceManager, Signer, Wallet } from "ethers";
 
-const OFFICIAL_AQUA_REGISTRY = "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a";
+const OFFICIAL_AQUA_REGISTRY = "0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a";
 const DEPLOYMENT_PATH = path.join(process.cwd(), "deployments", "sepolia.json");
 const DRY_POWDER_OPCODE = 0x34;
 const SALT_OPCODE = 0x1e;
@@ -35,18 +35,45 @@ interface DeploymentRecord {
     mETH: string;
     mWBTC: string;
     mLINK: string;
+    mARB: string;
+    mOP: string;
+    mBNB: string;
+    mSOL: string;
   };
   transactions: Record<string, string>;
 }
 
 interface StrategyRecord {
-  key: "eth" | "wbtc" | "link";
+  key: string;
   label: string;
   asset: string;
   assetAmount: bigint;
   reserveAmount: bigint;
   salt: bigint;
   decimals: number;
+  maxSpend: bigint;
+  quoteOut: bigint;
+  takerMintAmount: bigint;
+  spendCaps: bigint[];
+  priceBps: number[];
+}
+
+const assetSpecs = [
+  { key: "eth", tokenKey: "mETH", label: "ETH", name: "Mock Ether", symbol: "mETH", decimals: 18, assetAmount: "10", reserveAmount: "18000", quoteOut: "1800", takerMint: "100", salt: 1n, ladder: [{ spend: "2000", priceBps: 10000 }, { spend: "4000", priceBps: 8889 }, { spend: "4000", priceBps: 6667 }] },
+  { key: "wbtc", tokenKey: "mWBTC", label: "WBTC", name: "Mock Wrapped Bitcoin", symbol: "mWBTC", decimals: 8, assetAmount: "0.15384615", reserveAmount: "10000", quoteOut: "650", takerMint: "2", salt: 2n, ladder: [{ spend: "4000", priceBps: 10000 }, { spend: "3000", priceBps: 9231 }, { spend: "3000", priceBps: 6923 }] },
+  { key: "link", tokenKey: "mLINK", label: "LINK", name: "Mock Chainlink", symbol: "mLINK", decimals: 18, assetAmount: "500", reserveAmount: "10000", quoteOut: "200", takerMint: "100000", salt: 3n, ladder: [{ spend: "1400", priceBps: 10000 }, { spend: "1300", priceBps: 9500 }, { spend: "1300", priceBps: 9000 }] },
+  { key: "arb", tokenKey: "mARB", label: "ARB", name: "Mock Arbitrum", symbol: "mARB", decimals: 18, assetAmount: "10000", reserveAmount: "12000", quoteOut: "300", takerMint: "25000", salt: 4n, ladder: [{ spend: "1000", priceBps: 10000 }, { spend: "1000", priceBps: 9500 }, { spend: "1000", priceBps: 9000 }] },
+  { key: "op", tokenKey: "mOP", label: "OP", name: "Mock Optimism", symbol: "mOP", decimals: 18, assetAmount: "7000", reserveAmount: "13300", quoteOut: "250", takerMint: "20000", salt: 5n, ladder: [{ spend: "900", priceBps: 10000 }, { spend: "900", priceBps: 9500 }, { spend: "900", priceBps: 9000 }] },
+  { key: "bnb", tokenKey: "mBNB", label: "BNB", name: "Mock BNB", symbol: "mBNB", decimals: 18, assetAmount: "20", reserveAmount: "13000", quoteOut: "500", takerMint: "100", salt: 6n, ladder: [{ spend: "900", priceBps: 10000 }, { spend: "800", priceBps: 9500 }, { spend: "800", priceBps: 9000 }] },
+  { key: "sol", tokenKey: "mSOL", label: "SOL", name: "Mock Solana", symbol: "mSOL", decimals: 18, assetAmount: "80", reserveAmount: "14400", quoteOut: "450", takerMint: "1000", salt: 7n, ladder: [{ spend: "1200", priceBps: 10000 }, { spend: "1200", priceBps: 9500 }, { spend: "1100", priceBps: 9000 }] }
+] as const;
+
+function spendCaps(asset: typeof assetSpecs[number]) {
+  let total = 0n;
+  return asset.ladder.map((row) => {
+    total += usdc(row.spend);
+    return total;
+  });
 }
 
 export function requireSepolia() {
@@ -94,7 +121,7 @@ export function saveDeployment(record: DeploymentRecord) {
 export async function deploySepoliaContracts(): Promise<string[]> {
   requireSepolia();
   await assertAquaPresent();
-  const deployer = await getDeploymentSigner();
+  const deployer = new NonceManager(await getDeploymentSigner());
   const deployerAddress = await deployer.getAddress();
 
   const WETHMock = await ethers.getContractFactory("WETHMock");
@@ -114,12 +141,13 @@ export async function deploySepoliaContracts(): Promise<string[]> {
   const MockERC20 = await ethers.getContractFactory("MockERC20");
   const mUSDC = await MockERC20.connect(deployer).deploy("Mock USDC", "mUSDC", 6);
   await mUSDC.waitForDeployment();
-  const mETH = await MockERC20.connect(deployer).deploy("Mock Ether", "mETH", 18);
-  await mETH.waitForDeployment();
-  const mWBTC = await MockERC20.connect(deployer).deploy("Mock Wrapped Bitcoin", "mWBTC", 8);
-  await mWBTC.waitForDeployment();
-  const mLINK = await MockERC20.connect(deployer).deploy("Mock Chainlink", "mLINK", 18);
-  await mLINK.waitForDeployment();
+  const assetTokens: Record<string, any> = {};
+  for (const asset of assetSpecs) {
+    const token = await MockERC20.connect(deployer).deploy(asset.name, asset.symbol, asset.decimals);
+    await token.waitForDeployment();
+    assetTokens[asset.tokenKey] = token;
+  }
+  const tokenAddresses = Object.fromEntries(await Promise.all(Object.entries(assetTokens).map(async ([key, token]) => [key, await token.getAddress()]))) as Record<string, string>;
 
   saveDeployment({
     chainId: 11155111,
@@ -131,17 +159,13 @@ export async function deploySepoliaContracts(): Promise<string[]> {
     weth: await weth.getAddress(),
     tokens: {
       mUSDC: await mUSDC.getAddress(),
-      mETH: await mETH.getAddress(),
-      mWBTC: await mWBTC.getAddress(),
-      mLINK: await mLINK.getAddress()
-    },
+      ...tokenAddresses
+    } as DeploymentRecord["tokens"],
     transactions: {
       weth: weth.deploymentTransaction()?.hash ?? "",
       dryPowderRouter: router.deploymentTransaction()?.hash ?? "",
       mUSDC: mUSDC.deploymentTransaction()?.hash ?? "",
-      mETH: mETH.deploymentTransaction()?.hash ?? "",
-      mWBTC: mWBTC.deploymentTransaction()?.hash ?? "",
-      mLINK: mLINK.deploymentTransaction()?.hash ?? ""
+      ...Object.fromEntries(Object.entries(assetTokens).map(([key, token]) => [key, token.deploymentTransaction()?.hash ?? ""]))
     }
   });
 
@@ -150,9 +174,7 @@ export async function deploySepoliaContracts(): Promise<string[]> {
     `Aqua: ${OFFICIAL_AQUA_REGISTRY}`,
     `DryPowderRouter: ${await router.getAddress()}`,
     `mUSDC: ${await mUSDC.getAddress()}`,
-    `mETH: ${await mETH.getAddress()}`,
-    `mWBTC: ${await mWBTC.getAddress()}`,
-    `mLINK: ${await mLINK.getAddress()}`
+    ...assetSpecs.map((asset) => `${asset.tokenKey}: ${tokenAddresses[asset.tokenKey]}`)
   ];
 }
 
@@ -205,11 +227,20 @@ export function usdc(amount: string): bigint {
 }
 
 export function strategyInputs(deployment = loadDeployment()): StrategyRecord[] {
-  return [
-    { key: "eth", label: "ETH", asset: deployment.tokens.mETH, assetAmount: ethers.parseEther("10"), reserveAmount: usdc("27000"), salt: 1n, decimals: 18 },
-    { key: "wbtc", label: "WBTC", asset: deployment.tokens.mWBTC, assetAmount: ethers.parseUnits("0.125", 8), reserveAmount: usdc("10000"), salt: 2n, decimals: 8 },
-    { key: "link", label: "LINK", asset: deployment.tokens.mLINK, assetAmount: ethers.parseEther("500"), reserveAmount: usdc("10000"), salt: 3n, decimals: 18 }
-  ];
+  return assetSpecs.map((asset) => ({
+    key: asset.key,
+    label: asset.label,
+    asset: deployment.tokens[asset.tokenKey],
+    assetAmount: ethers.parseUnits(asset.assetAmount, asset.decimals),
+    reserveAmount: usdc(asset.reserveAmount),
+    salt: asset.salt,
+    decimals: asset.decimals,
+    maxSpend: spendCaps(asset)[asset.ladder.length - 1],
+    quoteOut: usdc(asset.quoteOut),
+    takerMintAmount: ethers.parseUnits(asset.takerMint, asset.decimals),
+    spendCaps: spendCaps(asset),
+    priceBps: asset.ladder.map((row) => row.priceBps)
+  }));
 }
 
 export function buildStrategy(deployment: DeploymentRecord, input: StrategyRecord): { order: OrderStruct; exactOutTraits: string } {
@@ -232,35 +263,27 @@ export async function contracts(deployment = loadDeployment()) {
   const router = await ethers.getContractAt("DryPowderRouter", deployment.dryPowderRouter);
   const aqua = await ethers.getContractAt("Aqua", deployment.aqua);
   const mUSDC = await ethers.getContractAt("MockERC20", deployment.tokens.mUSDC);
-  const mETH = await ethers.getContractAt("MockERC20", deployment.tokens.mETH);
-  const mWBTC = await ethers.getContractAt("MockERC20", deployment.tokens.mWBTC);
-  const mLINK = await ethers.getContractAt("MockERC20", deployment.tokens.mLINK);
-  return { router, aqua, mUSDC, mETH, mWBTC, mLINK };
+  const assetTokens = Object.fromEntries(await Promise.all(assetSpecs.map(async (asset) => [asset.key, await ethers.getContractAt("MockERC20", deployment.tokens[asset.tokenKey])])));
+  return { router, aqua, mUSDC, assetTokens };
 }
 
 export async function setupSepoliaDemo(): Promise<string[]> {
   requireSepolia();
   const deployment = loadDeployment();
-  const signer = await getDeploymentSigner();
+  const signer = new NonceManager(await getDeploymentSigner());
   const taker = await getTaker();
-  const { router, aqua, mUSDC, mETH, mWBTC, mLINK } = await contracts(deployment);
+  const { router, aqua, mUSDC, assetTokens } = await contracts(deployment);
 
   await (await mUSDC.connect(signer).mint(deployment.maker, usdc("10000"))).wait();
-  await (await mETH.connect(signer).mint(taker.address, ethers.parseEther("100"))).wait();
-  await (await mWBTC.connect(signer).mint(taker.address, ethers.parseUnits("2", 8))).wait();
-  await (await mLINK.connect(signer).mint(taker.address, ethers.parseEther("100000"))).wait();
+  for (const input of strategyInputs(deployment)) {
+    await (await assetTokens[input.key].connect(signer).mint(taker.address, input.takerMintAmount)).wait();
+  }
   await (await mUSDC.connect(signer).approve(deployment.aqua, ethers.MaxUint256)).wait();
 
-  await (await router.connect(signer).createReserve(
-    RESERVE_ID,
-    deployment.tokens.mUSDC,
-    usdc("10000"),
-    [usdc("4000"), usdc("7500"), usdc("10000")],
-    [10000, 9500, 9000]
-  )).wait();
-  await (await router.connect(signer).addLeg(RESERVE_ID, deployment.tokens.mETH, usdc("6000"))).wait();
-  await (await router.connect(signer).addLeg(RESERVE_ID, deployment.tokens.mWBTC, usdc("6000"))).wait();
-  await (await router.connect(signer).addLeg(RESERVE_ID, deployment.tokens.mLINK, usdc("4000"))).wait();
+  await (await router.connect(signer).createReserve(RESERVE_ID, deployment.tokens.mUSDC, usdc("10000"))).wait();
+  for (const input of strategyInputs(deployment)) {
+    await (await router.connect(signer).addLeg(RESERVE_ID, input.asset, input.spendCaps, input.priceBps)).wait();
+  }
   await (await router.connect(signer).activateReserve(RESERVE_ID)).wait();
 
   for (const input of strategyInputs(deployment)) {
@@ -297,13 +320,11 @@ export async function quoteLine(label: string, input: StrategyRecord, desiredOut
 export async function quoteSepoliaDemo(): Promise<string[]> {
   requireSepolia();
   const deployment = loadDeployment();
-  const [eth, wbtc, link] = strategyInputs(deployment);
+  const inputs = strategyInputs(deployment);
   return [
     "Sepolia Dry Powder quotes",
     await reserveLine("Current reserve", deployment),
-    await quoteLine("ETH quote", eth, usdc("2700"), deployment),
-    await quoteLine("WBTC quote", wbtc, usdc("800"), deployment),
-    await quoteLine("LINK quote", link, usdc("200"), deployment)
+    ...(await Promise.all(inputs.map((input) => quoteLine(`${input.label} quote`, input, input.quoteOut, deployment))))
   ];
 }
 
@@ -311,14 +332,14 @@ export async function fillSepoliaEth(): Promise<string[]> {
   requireSepolia();
   const deployment = loadDeployment();
   const taker = await getTaker();
-  const { router, mUSDC, mETH } = await contracts(deployment);
+  const { router, mUSDC, assetTokens } = await contracts(deployment);
   const [eth] = strategyInputs(deployment);
   const strategy = buildStrategy(deployment, eth);
   const beforeMaker = await mUSDC.balanceOf(deployment.maker);
   const beforeTaker = await mUSDC.balanceOf(taker.address);
 
-  await (await mETH.connect(taker).approve(deployment.dryPowderRouter, ethers.MaxUint256)).wait();
-  await (await router.connect(taker).swap(strategy.order, usdc("4000"), strategy.exactOutTraits)).wait();
+  await (await assetTokens[eth.key].connect(taker).approve(deployment.dryPowderRouter, ethers.MaxUint256)).wait();
+  await (await router.connect(taker).swap(strategy.order, usdc("2000"), strategy.exactOutTraits)).wait();
 
   return [
     "Sepolia Dry Powder ETH fill",
@@ -331,12 +352,11 @@ export async function fillSepoliaEth(): Promise<string[]> {
 export async function repriceSepoliaDemo(): Promise<string[]> {
   requireSepolia();
   const deployment = loadDeployment();
-  const [, wbtc, link] = strategyInputs(deployment);
+  const inputs = strategyInputs(deployment).filter((input) => input.key !== "eth");
   return [
     "Sepolia Dry Powder sibling repricing",
     await reserveLine("Current reserve", deployment),
-    await quoteLine("WBTC quote after ETH fill", wbtc, usdc("760"), deployment),
-    await quoteLine("LINK quote after ETH fill", link, usdc("190"), deployment)
+    ...(await Promise.all(inputs.map((input) => quoteLine(`${input.label} quote after ETH fill`, input, input.quoteOut, deployment))))
   ];
 }
 

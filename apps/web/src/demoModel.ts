@@ -1,4 +1,16 @@
-export type LegKey = "eth" | "wbtc" | "link";
+import { assetByKey, assetCatalog, type AssetKey } from "./assets";
+
+export type LegKey = AssetKey;
+
+export type StrategyDraft = {
+  asset: LegKey;
+  ladder: StrategyLadderRow[];
+};
+
+export type StrategyLadderRow = {
+  entryPrice: string;
+  maxSpend: string;
+};
 
 export type Tranche = {
   label: string;
@@ -9,7 +21,6 @@ export type Tranche = {
 export type Reserve = {
   totalBudget: number;
   spent: number;
-  tranches: Tranche[];
 };
 
 export type Leg = {
@@ -20,6 +31,7 @@ export type Leg = {
   spent: number;
   baseMaxPrice: number;
   currentMaxPrice: number;
+  ladder: Array<{ entryPrice: number; maxSpend: number; cumulativeMaxSpend: number }>;
   allocationColor: string;
 };
 
@@ -29,53 +41,27 @@ export type DemoState = {
   eventLog: string[];
 };
 
-const tranches: Tranche[] = [
-  { label: "Full price", ceiling: 4000, multiplierBps: 10000 },
-  { label: "Selective", ceiling: 7500, multiplierBps: 9500 },
-  { label: "Scarce capital", ceiling: 10000, multiplierBps: 9000 }
-];
-
 export const initialDemo: DemoState = {
   reserve: {
     totalBudget: 10000,
-    spent: 0,
-    tranches
+    spent: 0
   },
   legs: [
-    {
-      key: "eth",
-      symbol: "ETH",
-      name: "Ether accumulation",
-      maxSpend: 6000,
+    ...assetCatalog.map((asset) => ({
+      key: asset.key,
+      symbol: asset.symbol,
+      name: asset.name,
+      maxSpend: Number(asset.maxSpend),
       spent: 0,
-      baseMaxPrice: 2700,
-      currentMaxPrice: 2700,
-      allocationColor: "#4f7cff"
-    },
-    {
-      key: "wbtc",
-      symbol: "WBTC",
-      name: "Bitcoin accumulation",
-      maxSpend: 6000,
-      spent: 0,
-      baseMaxPrice: 80000,
-      currentMaxPrice: 80000,
-      allocationColor: "#f4b455"
-    },
-    {
-      key: "link",
-      symbol: "LINK",
-      name: "Chainlink accumulation",
-      maxSpend: 4000,
-      spent: 0,
-      baseMaxPrice: 20,
-      currentMaxPrice: 20,
-      allocationColor: "#34c7dd"
-    }
+      baseMaxPrice: Number(asset.ladder[0].entryPrice),
+      currentMaxPrice: Number(asset.ladder[0].entryPrice),
+      ladder: toDemoLadder(asset.ladder),
+      allocationColor: asset.allocationColor
+    }))
   ],
   eventLog: [
     "Reserve ready: 10,000 mUSDC shared across 16,000 mUSDC of leg caps.",
-    "Three Aqua strategies quote against the same Dry Powder reserve."
+    "Each Aqua strategy owns its own entry ladder against the shared reserve."
   ]
 };
 
@@ -90,31 +76,31 @@ export function summarizeReserve(state: DemoState) {
   };
 }
 
-export function selectTranche(reserve: Reserve): Tranche {
-  return reserve.tranches.find((tranche) => reserve.spent < tranche.ceiling) ?? reserve.tranches[reserve.tranches.length - 1];
-}
-
 export function applyFill(state: DemoState, legKey: LegKey, reserveAmount: number): DemoState {
   const nextSpent = Math.min(state.reserve.totalBudget, state.reserve.spent + reserveAmount);
   const reserve = { ...state.reserve, spent: nextSpent };
-  const activeTranche = selectTranche(reserve);
 
   return {
     reserve,
     legs: state.legs.map((leg) => {
       const spent = leg.key === legKey ? Math.min(leg.maxSpend, leg.spent + reserveAmount) : leg.spent;
+      const activeRow = selectLadderRow({ ...leg, spent });
       return {
         ...leg,
         spent,
-        currentMaxPrice: (leg.baseMaxPrice * activeTranche.multiplierBps) / 10000
+        currentMaxPrice: activeRow.entryPrice
       };
     }),
     eventLog: [
-      `ETH fill consumed ${formatUsd(reserveAmount)} of shared mUSDC reserve.`,
-      `${activeTranche.label} tranche active: sibling strategies now quote at ${(activeTranche.multiplierBps / 100).toFixed(0)}%.`,
+      `${legKey.toUpperCase()} fill consumed ${formatUsd(reserveAmount)} of shared mUSDC reserve.`,
+      `${legKey.toUpperCase()} ladder advanced independently.`,
       ...state.eventLog
     ]
   };
+}
+
+export function selectLadderRow(leg: Leg) {
+  return leg.ladder.find((row) => leg.spent < row.cumulativeMaxSpend) ?? leg.ladder[leg.ladder.length - 1];
 }
 
 export function formatUsd(value: number): string {
@@ -123,4 +109,30 @@ export function formatUsd(value: number): string {
     currency: "USD",
     maximumFractionDigits: value >= 1000 ? 0 : 2
   }).format(value);
+}
+
+export function getStrategyDraftDefaults(asset: LegKey): StrategyDraft {
+  const config = assetByKey[asset];
+  if (!config) throw new Error(`Unknown strategy asset: ${asset}`);
+
+  return {
+    asset,
+    ladder: config.ladder.map((row) => ({ ...row }))
+  };
+}
+
+export function getFillAmountDefault(asset: LegKey): string {
+  return assetByKey[asset]?.fillAmount ?? "";
+}
+
+function toDemoLadder(ladder: StrategyLadderRow[]) {
+  let cumulativeMaxSpend = 0;
+  return ladder.map((row) => {
+    cumulativeMaxSpend += Number(row.maxSpend);
+    return {
+      entryPrice: Number(row.entryPrice),
+      maxSpend: Number(row.maxSpend),
+      cumulativeMaxSpend
+    };
+  });
 }

@@ -12,11 +12,13 @@ describe("Phase 6 demo scripts", function () {
 
     expect(output).to.include("Dry Powder demo");
     expect(output).to.include("Initial reserve: spent 0.0 / 10000.0 mUSDC");
-    expect(output).to.include("ETH quote: 1.000000000000000001 mETH -> 2700.0 mUSDC");
-    expect(output).to.include("WBTC quote after ETH fill: 0.01000001 mWBTC -> 760.0 mUSDC");
-    expect(output).to.include("LINK quote after ETH fill: 10.000000000000000001 mLINK -> 190.0 mUSDC");
-    expect(output).to.include("After ETH fill: spent 4000.0 / 10000.0 mUSDC");
-    expect(output).to.include("Maker mUSDC: 6000.0");
-    expect(output).to.include("Taker mUSDC: 4000.0");
+    expect(output).to.include("ETH quote: 1.000000000000000001 mETH -> 1800.0 mUSDC");
+    expect(output).to.include("WBTC quote: 0.01 mWBTC -> 650.0 mUSDC");
+    expect(output).to.include("SOL quote: 2.500000000000000001 mSOL -> 450.0 mUSDC");
+    expect(output).to.include("WBTC quote after ETH fill: 0.01 mWBTC -> 650.0 mUSDC");
+    expect(output).to.include("LINK quote after ETH fill: 10.0 mLINK -> 200.0 mUSDC");
+    expect(output).to.include("After ETH fill: spent 2000.0 / 10000.0 mUSDC");
+    expect(output).to.include("Maker mUSDC: 8000.0");
+    expect(output).to.include("Taker mUSDC: 2000.0");
   });
 });

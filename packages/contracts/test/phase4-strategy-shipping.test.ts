@@ -27,16 +27,10 @@ async function deployStrategyFixture() {
   await mLINK.mint(taker.address, ethers.parseEther("1000"));
   await mUSDC.connect(maker).approve(await aqua.getAddress(), ethers.MaxUint256);
 
-  await router.connect(maker).createReserve(
-    RESERVE_ID,
-    await mUSDC.getAddress(),
-    ethers.parseUnits("10000", 6),
-    [ethers.parseUnits("4000", 6), ethers.parseUnits("7500", 6), ethers.parseUnits("10000", 6)],
-    [10000, 9500, 9000]
-  );
-  await router.connect(maker).addLeg(RESERVE_ID, await mETH.getAddress(), ethers.parseUnits("6000", 6));
-  await router.connect(maker).addLeg(RESERVE_ID, await mWBTC.getAddress(), ethers.parseUnits("6000", 6));
-  await router.connect(maker).addLeg(RESERVE_ID, await mLINK.getAddress(), ethers.parseUnits("4000", 6));
+  await router.connect(maker).createReserve(RESERVE_ID, await mUSDC.getAddress(), ethers.parseUnits("10000", 6));
+  await router.connect(maker).addLeg(RESERVE_ID, await mETH.getAddress(), [ethers.parseUnits("6000", 6)], [10000]);
+  await router.connect(maker).addLeg(RESERVE_ID, await mWBTC.getAddress(), [ethers.parseUnits("6000", 6)], [10000]);
+  await router.connect(maker).addLeg(RESERVE_ID, await mLINK.getAddress(), [ethers.parseUnits("4000", 6)], [10000]);
   await router.connect(maker).activateReserve(RESERVE_ID);
 
   return { owner, maker, taker, aqua, router, mUSDC, mETH, mWBTC, mLINK };

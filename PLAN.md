@@ -221,7 +221,7 @@ DONE         Implemented, tested, and documented enough for the next phase.
 
 - [x] Reduce `DryPowderRouter` deployed bytecode under the public EVM `24,576` byte limit.
 - [x] Add Ethereum Sepolia network config without reading or modifying `.env`.
-- [x] Add deployment script that uses the official Aqua registry at `0x1111113ccf1426a8e30e2bff5e005d929bf6a90a`.
+- [x] Add deployment script that uses the official Aqua registry at `0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`.
 - [x] Deploy `DryPowderRouter` and mock demo tokens to Sepolia.
 - [x] Add/setup Sepolia scripts for maker balances, approvals, reserve creation, legs, activation, and strategy shipping.
 - [x] Add Sepolia quote/fill/reprice scripts that exercise ETH, WBTC, and LINK demo strategies.

@@ -18,9 +18,9 @@ contract DryPowderStorage {
 
     struct Layout {
         mapping(address maker => mapping(bytes32 reserveId => Reserve)) reserves;
-        mapping(address maker => mapping(bytes32 reserveId => uint256[])) thresholds;
-        mapping(address maker => mapping(bytes32 reserveId => uint256[])) multipliersBps;
         mapping(address maker => mapping(bytes32 reserveId => mapping(address token => Leg))) legs;
+        mapping(address maker => mapping(bytes32 reserveId => mapping(address token => uint256[]))) legSpendCaps;
+        mapping(address maker => mapping(bytes32 reserveId => mapping(address token => uint256[]))) legPriceBps;
         mapping(address maker => mapping(bytes32 reserveId => uint256)) legCounts;
     }
 
@@ -31,7 +31,7 @@ contract DryPowderStorage {
     error InvalidReserveId();
     error InvalidReserveToken();
     error InvalidTotalBudget();
-    error InvalidTranches();
+    error InvalidLegLadder();
     error ReserveAlreadyExists();
     error ReserveNotFound();
     error ReserveAlreadyActive();
@@ -51,14 +51,11 @@ contract DryPowderStorage {
     function createReserve(
         bytes32 reserveId,
         address reserveToken,
-        uint256 totalBudget,
-        uint256[] calldata thresholds,
-        uint256[] calldata multipliersBps
+        uint256 totalBudget
     ) external {
         if (reserveId == bytes32(0)) revert InvalidReserveId();
         if (reserveToken == address(0)) revert InvalidReserveToken();
         if (totalBudget == 0) revert InvalidTotalBudget();
-        _validateTranches(totalBudget, thresholds, multipliersBps);
 
         Layout storage $ = _layout();
         Reserve storage reserve = $.reserves[msg.sender][reserveId];
@@ -68,17 +65,12 @@ contract DryPowderStorage {
         reserve.totalBudget = totalBudget;
         reserve.exists = true;
 
-        for (uint256 i; i < thresholds.length; i++) {
-            $.thresholds[msg.sender][reserveId].push(thresholds[i]);
-            $.multipliersBps[msg.sender][reserveId].push(multipliersBps[i]);
-        }
-
         emit ReserveCreated(msg.sender, reserveId, reserveToken, totalBudget);
     }
 
-    function addLeg(bytes32 reserveId, address token, uint256 maxSpend) external {
+    function addLeg(bytes32 reserveId, address token, uint256[] calldata spendCaps, uint256[] calldata priceBps) external {
         if (token == address(0)) revert InvalidLegToken();
-        if (maxSpend == 0) revert InvalidLegMaxSpend();
+        uint256 maxSpend = _validateLegLadder(spendCaps, priceBps);
 
         Layout storage $ = _layout();
         Reserve storage reserve = $.reserves[msg.sender][reserveId];
@@ -91,12 +83,13 @@ contract DryPowderStorage {
         leg.maxSpend = maxSpend;
         leg.exists = true;
         $.legCounts[msg.sender][reserveId]++;
+        _setLegLadder($, msg.sender, reserveId, token, spendCaps, priceBps);
 
         emit LegAdded(msg.sender, reserveId, token, maxSpend);
     }
 
-    function updateLeg(bytes32 reserveId, address token, uint256 maxSpend) external {
-        if (maxSpend == 0) revert InvalidLegMaxSpend();
+    function updateLeg(bytes32 reserveId, address token, uint256[] calldata spendCaps, uint256[] calldata priceBps) external {
+        uint256 maxSpend = _validateLegLadder(spendCaps, priceBps);
 
         Layout storage $ = _layout();
         Reserve storage reserve = $.reserves[msg.sender][reserveId];
@@ -107,6 +100,7 @@ contract DryPowderStorage {
         if (maxSpend < leg.spent) revert LegMaxSpendBelowSpent();
 
         leg.maxSpend = maxSpend;
+        _setLegLadder($, msg.sender, reserveId, token, spendCaps, priceBps);
 
         emit LegUpdated(msg.sender, reserveId, token, maxSpend);
     }
@@ -122,6 +116,8 @@ contract DryPowderStorage {
         uint256 spent = leg.spent;
         leg.maxSpend = 0;
         leg.exists = false;
+        delete $.legSpendCaps[msg.sender][reserveId][token];
+        delete $.legPriceBps[msg.sender][reserveId][token];
         $.legCounts[msg.sender][reserveId]--;
 
         emit LegRemoved(msg.sender, reserveId, token, spent);
@@ -143,12 +139,12 @@ contract DryPowderStorage {
         return _layout().reserves[maker][reserveId];
     }
 
-    function getReserveThresholds(address maker, bytes32 reserveId) external view returns (uint256[] memory) {
-        return _layout().thresholds[maker][reserveId];
+    function getLegSpendCaps(address maker, bytes32 reserveId, address token) external view returns (uint256[] memory) {
+        return _layout().legSpendCaps[maker][reserveId][token];
     }
 
-    function getReserveMultipliersBps(address maker, bytes32 reserveId) external view returns (uint256[] memory) {
-        return _layout().multipliersBps[maker][reserveId];
+    function getLegPriceBps(address maker, bytes32 reserveId, address token) external view returns (uint256[] memory) {
+        return _layout().legPriceBps[maker][reserveId][token];
     }
 
     function getLeg(address maker, bytes32 reserveId, address token) external view returns (Leg memory) {
@@ -166,20 +162,38 @@ contract DryPowderStorage {
         if (!reserve.exists) revert ReserveNotFound();
     }
 
-    function _validateTranches(
-        uint256 totalBudget,
-        uint256[] calldata thresholds,
-        uint256[] calldata multipliersBps
-    ) private pure {
-        if (thresholds.length == 0 || thresholds.length != multipliersBps.length) revert InvalidTranches();
+    function _validateLegLadder(
+        uint256[] calldata spendCaps,
+        uint256[] calldata priceBps
+    ) private pure returns (uint256 maxSpend) {
+        if (spendCaps.length == 0 || spendCaps.length != priceBps.length) revert InvalidLegLadder();
+        if (priceBps[0] != 10_000) revert InvalidLegLadder();
 
         uint256 previous;
-        for (uint256 i; i < thresholds.length; i++) {
-            if (thresholds[i] == 0 || thresholds[i] <= previous || thresholds[i] > totalBudget) revert InvalidTranches();
-            if (multipliersBps[i] == 0) revert InvalidTranches();
-            previous = thresholds[i];
+        uint256 previousPrice = 10_000;
+        for (uint256 i; i < spendCaps.length; i++) {
+            if (spendCaps[i] == 0 || spendCaps[i] <= previous) revert InvalidLegLadder();
+            if (priceBps[i] == 0 || priceBps[i] > previousPrice) revert InvalidLegLadder();
+            previous = spendCaps[i];
+            previousPrice = priceBps[i];
         }
 
-        if (previous != totalBudget) revert InvalidTranches();
+        return previous;
+    }
+
+    function _setLegLadder(
+        Layout storage $,
+        address maker,
+        bytes32 reserveId,
+        address token,
+        uint256[] calldata spendCaps,
+        uint256[] calldata priceBps
+    ) private {
+        delete $.legSpendCaps[maker][reserveId][token];
+        delete $.legPriceBps[maker][reserveId][token];
+        for (uint256 i; i < spendCaps.length; i++) {
+            $.legSpendCaps[maker][reserveId][token].push(spendCaps[i]);
+            $.legPriceBps[maker][reserveId][token].push(priceBps[i]);
+        }
     }
 }

@@ -3,6 +3,7 @@ import {
   concatHex,
   encodeAbiParameters,
   keccak256,
+  getAddress,
   numberToHex,
   padHex,
   parseUnits,
@@ -23,8 +24,9 @@ import {
   USE_AQUA_INSTEAD_OF_SIGNATURE,
   USE_TRANSFER_FROM_AND_AQUA_PUSH
 } from "./constants";
+import { assetCatalog, type AssetKey } from "../assets";
 
-export type LegKey = "eth" | "wbtc" | "link";
+export type LegKey = AssetKey;
 
 export type Order = {
   maker: Address;
@@ -32,7 +34,7 @@ export type Order = {
   data: Hex;
 };
 
-type StrategyInput = {
+export type StrategyInput = {
   key: LegKey;
   label: string;
   asset: Address;
@@ -41,6 +43,18 @@ type StrategyInput = {
   salt: bigint;
   decimals: number;
   fillAmount: bigint;
+  maxSpend: bigint;
+  takerMintAmount: bigint;
+  ladder: StrategyLadderInput[];
+};
+
+export type StrategyPlanInput = {
+  ladder?: StrategyLadderInput[];
+};
+
+export type StrategyLadderInput = {
+  entryPrice: string;
+  maxSpend: string;
 };
 
 export type BuiltStrategy = {
@@ -64,48 +78,33 @@ export type FillIntent = {
 };
 
 export type StrategyPlan = {
-  leg: { token: Address; maxSpend: bigint };
+  leg: { token: Address; maxSpend: bigint; spendCaps: bigint[]; priceBps: bigint[] };
   strategy: BuiltStrategy;
   shipTransaction: { to: Address; data: Hex; value: bigint };
   dockTransaction: { to: Address; data: Hex; value: bigint };
 };
 
-export const strategyInputs: Record<LegKey, StrategyInput> = {
-  eth: {
-    key: "eth",
-    label: "ETH",
-    asset: TOKENS.mETH,
-    assetAmount: parseUnits("10", 18),
-    reserveAmount: usdc("27000"),
-    salt: 1n,
-    decimals: 18,
-    fillAmount: usdc("4000")
-  },
-  wbtc: {
-    key: "wbtc",
-    label: "WBTC",
-    asset: TOKENS.mWBTC,
-    assetAmount: parseUnits("0.125", 8),
-    reserveAmount: usdc("10000"),
-    salt: 2n,
-    decimals: 8,
-    fillAmount: usdc("800")
-  },
-  link: {
-    key: "link",
-    label: "LINK",
-    asset: TOKENS.mLINK,
-    assetAmount: parseUnits("500", 18),
-    reserveAmount: usdc("10000"),
-    salt: 3n,
-    decimals: 18,
-    fillAmount: usdc("200")
-  }
-};
-
 export function usdc(amount: string) {
   return parseUnits(amount, 6);
 }
+
+export const strategyInputs = Object.fromEntries(
+  assetCatalog.map((asset) => [asset.key, {
+    key: asset.key,
+    label: asset.symbol,
+    asset: asset.token,
+    assetAmount: parseUnits(asset.assetAmount, asset.decimals),
+    reserveAmount: usdc(asset.reserveAmount),
+    salt: asset.salt,
+    decimals: asset.decimals,
+    fillAmount: usdc(asset.fillAmount),
+    maxSpend: usdc(asset.maxSpend),
+    takerMintAmount: parseUnits(asset.takerMintAmount, asset.decimals),
+    ladder: asset.ladder.map((row) => ({ ...row }))
+  }])
+) as unknown as Record<LegKey, StrategyInput>;
+
+export const strategyKeys = assetCatalog.map((asset) => asset.key);
 
 export function formatEthBalance(balance: bigint) {
   const integer = balance / 10n ** 18n;
@@ -120,7 +119,7 @@ export function assertHasSepoliaGas(balance: bigint) {
 }
 
 export function roleForAccount(account: Address, maker: Address | null) {
-  if (!maker || account.toLowerCase() === maker.toLowerCase()) return "maker";
+  if (!maker || getAddress(account) === getAddress(maker)) return "maker";
   return "taker";
 }
 
@@ -128,8 +127,14 @@ export function createReserveId(maker: Address, nonce: string): Hex {
   return keccak256(stringToBytes(`dry-powder:web-demo:${maker}:${nonce}`));
 }
 
-export function buildStrategy(key: LegKey, maker: Address, reserveId: Hex): BuiltStrategy {
-  const input = strategyInputs[key];
+export function buildStrategy(key: LegKey, maker: Address, reserveId: Hex, overrides: StrategyPlanInput = {}): BuiltStrategy {
+  const baseInput = strategyInputs[key];
+  if (!baseInput) throw new Error(`Unknown strategy asset: ${key}`);
+  const ladder = overrides.ladder ?? baseInput.ladder;
+  const input = {
+    ...baseInput,
+    reserveAmount: quoteReserveAmount(baseInput.assetAmount, baseInput.decimals, ladder[0].entryPrice)
+  };
   const tokenA = BigInt(input.asset) < BigInt(TOKENS.mUSDC) ? input.asset : TOKENS.mUSDC;
   const tokenB = tokenA === input.asset ? TOKENS.mUSDC : input.asset;
   const direction = BigInt(input.asset) < BigInt(TOKENS.mUSDC);
@@ -182,45 +187,63 @@ export function buildFillIntent(key: LegKey, maker: Address, reserveId: Hex, res
   };
 }
 
-export function buildStrategyPlan(maker: Address, reserveId: Hex, key: LegKey): StrategyPlan {
-  const strategy = buildStrategy(key, maker, reserveId);
+export function buildStrategyPlan(maker: Address, reserveId: Hex, key: LegKey, overrides: StrategyPlanInput = {}): StrategyPlan {
+  const strategy = buildStrategy(key, maker, reserveId, overrides);
   const aqua = new AquaProtocolContract(new OneInchAddress(AQUA_ADDRESS));
-  const legMaxSpend: Record<LegKey, bigint> = {
-    eth: usdc("6000"),
-    wbtc: usdc("6000"),
-    link: usdc("4000")
-  };
+  const leg = buildLegLadder(strategy.input.asset, overrides.ladder ?? strategy.input.ladder);
+
+  const shipTransaction = aqua.ship({
+    app: new OneInchAddress(DRY_POWDER_ROUTER),
+    strategy: new HexString(strategy.strategyBytes),
+    amountsAndTokens: strategy.shipTokens.map((token, index) => ({
+      token: new OneInchAddress(token),
+      amount: strategy.shipAmounts[index]
+    }))
+  });
+  const dockTransaction = aqua.dock({
+    app: new OneInchAddress(DRY_POWDER_ROUTER),
+    strategyHash: new HexString(strategy.strategyHash),
+    tokens: strategy.shipTokens.map((token) => new OneInchAddress(token))
+  });
 
   return {
-    leg: { token: strategy.input.asset, maxSpend: legMaxSpend[key] },
+    leg,
     strategy,
-    shipTransaction: aqua.ship({
-      app: new OneInchAddress(DRY_POWDER_ROUTER),
-      strategy: new HexString(strategy.strategyBytes),
-      amountsAndTokens: strategy.shipTokens.map((token, index) => ({
-        token: new OneInchAddress(token),
-        amount: strategy.shipAmounts[index]
-      }))
-    }),
-    dockTransaction: aqua.dock({
-      app: new OneInchAddress(DRY_POWDER_ROUTER),
-      strategyHash: new HexString(strategy.strategyHash),
-      tokens: strategy.shipTokens.map((token) => new OneInchAddress(token))
-    })
+    shipTransaction: { ...shipTransaction, to: getAddress(shipTransaction.to) },
+    dockTransaction: { ...dockTransaction, to: getAddress(dockTransaction.to) }
   };
 }
 
+function quoteReserveAmount(assetAmount: bigint, assetDecimals: number, maxPrice: string) {
+  return (assetAmount * usdc(maxPrice)) / 10n ** BigInt(assetDecimals);
+}
+
 export function buildSetupPlan(maker: Address, reserveId: Hex) {
-  const plans = (Object.keys(strategyInputs) as LegKey[]).map((key) => buildStrategyPlan(maker, reserveId, key));
+  const plans = strategyKeys.map((key) => buildStrategyPlan(maker, reserveId, key));
 
   return {
     totalBudget: usdc("10000"),
-    reserveThresholds: [usdc("4000"), usdc("7500"), usdc("10000")],
-    multipliersBps: [10000n, 9500n, 9000n],
     legs: plans.map((plan) => plan.leg),
     strategies: plans.map((plan) => plan.strategy),
     shipTransactions: plans.map((plan) => plan.shipTransaction),
     dockTransactions: plans.map((plan) => plan.dockTransaction)
+  };
+}
+
+export function buildLegLadder(token: Address, ladder: StrategyLadderInput[]) {
+  let cumulativeMaxSpend = 0n;
+  const firstPrice = Number(ladder[0]?.entryPrice ?? "0");
+  const spendCaps = ladder.map((row) => {
+    cumulativeMaxSpend += usdc(row.maxSpend);
+    return cumulativeMaxSpend;
+  });
+  const priceBps = ladder.map((row, index) => index === 0 ? 10000n : BigInt(Math.round((Number(row.entryPrice) / firstPrice) * 10000)));
+
+  return {
+    token,
+    maxSpend: cumulativeMaxSpend,
+    spendCaps,
+    priceBps
   };
 }
 

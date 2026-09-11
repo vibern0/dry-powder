@@ -36,15 +36,15 @@ abstract contract DryPowder is DryPowderStorage {
         Leg storage leg = $.legs[ctx.query.maker][reserveId][ctx.query.tokenIn];
         if (!leg.exists) revert DryPowderLegNotFound(ctx.query.maker, reserveId, ctx.query.tokenIn);
 
-        (uint256 trancheRemaining, uint256 multiplierBps) = _currentTranche($, ctx.query.maker, reserveId, reserve.spent);
+        (uint256 tierRemaining, uint256 priceBps) = _currentLegTier($, ctx.query.maker, reserveId, ctx.query.tokenIn, leg.spent);
         uint256 capacity = _min(
             reserve.totalBudget - reserve.spent,
             leg.maxSpend - leg.spent,
             IERC20(ctx.query.tokenOut).balanceOf(ctx.query.maker),
-            trancheRemaining
+            tierRemaining
         );
 
-        (balanceIn, balanceOut) = _applyCapacity(ctx.swap.balanceIn, ctx.swap.balanceOut, capacity, multiplierBps);
+        (balanceIn, balanceOut) = _applyCapacity(ctx.swap.balanceIn, ctx.swap.balanceOut, capacity, priceBps);
         (amountIn, amountOut) = _previewLimitSwap(ctx, balanceIn, balanceOut);
 
         if (!ctx.vm.isStaticContext) {
@@ -54,31 +54,32 @@ abstract contract DryPowder is DryPowderStorage {
         }
     }
 
-    function _currentTranche(
+    function _currentLegTier(
         Layout storage $,
         address maker,
         bytes32 reserveId,
+        address token,
         uint256 spent
-    ) private view returns (uint256 remaining, uint256 multiplierBps) {
-        uint256[] storage thresholds = $.thresholds[maker][reserveId];
-        uint256[] storage multipliers = $.multipliersBps[maker][reserveId];
+    ) private view returns (uint256 remaining, uint256 priceBps) {
+        uint256[] storage spendCaps = $.legSpendCaps[maker][reserveId][token];
+        uint256[] storage prices = $.legPriceBps[maker][reserveId][token];
 
-        for (uint256 i; i < thresholds.length; i++) {
-            if (spent < thresholds[i]) {
-                return (thresholds[i] - spent, multipliers[i]);
+        for (uint256 i; i < spendCaps.length; i++) {
+            if (spent < spendCaps[i]) {
+                return (spendCaps[i] - spent, prices[i]);
             }
         }
 
-        return (0, multipliers[multipliers.length - 1]);
+        return (0, prices[prices.length - 1]);
     }
 
     function _applyCapacity(
         uint256 balanceIn,
         uint256 balanceOut,
         uint256 capacity,
-        uint256 multiplierBps
+        uint256 priceBps
     ) private pure returns (uint256 cappedBalanceIn, uint256 cappedBalanceOut) {
-        uint256 adjustedBalanceOut = balanceOut * multiplierBps / BPS_BASE;
+        uint256 adjustedBalanceOut = balanceOut * priceBps / BPS_BASE;
         if (adjustedBalanceOut <= capacity) {
             return (balanceIn, adjustedBalanceOut);
         }

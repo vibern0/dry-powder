@@ -3,6 +3,15 @@ import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ethers } from "hardhat";
 
 const RESERVE_ID = ethers.id("dry-powder:v1");
+const fullPrice = [10000];
+
+function usdc(amount: string) {
+  return ethers.parseUnits(amount, 6);
+}
+
+function singleCap(amount: string) {
+  return [usdc(amount)];
+}
 
 async function deployLifecycleFixture() {
   const [maker, otherMaker] = await ethers.getSigners();
@@ -22,89 +31,65 @@ async function deployLifecycleFixture() {
 describe("Phase 1 reserve lifecycle", function () {
   it("creates one inactive reserve with a 10,000 mUSDC budget", async function () {
     const { maker, dryPowder, mUSDC } = await loadFixture(deployLifecycleFixture);
-    const thresholds = [
-      ethers.parseUnits("4000", 6),
-      ethers.parseUnits("7500", 6),
-      ethers.parseUnits("10000", 6)
-    ];
-    const multipliers = [10000, 9500, 9000];
 
-    await expect(dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), ethers.parseUnits("10000", 6), thresholds, multipliers))
+    await expect(dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), usdc("10000")))
       .to.emit(dryPowder, "ReserveCreated")
-      .withArgs(maker.address, RESERVE_ID, await mUSDC.getAddress(), ethers.parseUnits("10000", 6));
+      .withArgs(maker.address, RESERVE_ID, await mUSDC.getAddress(), usdc("10000"));
 
     const reserve = await dryPowder.getReserve(maker.address, RESERVE_ID);
     expect(reserve.reserveToken).to.equal(await mUSDC.getAddress());
-    expect(reserve.totalBudget).to.equal(ethers.parseUnits("10000", 6));
+    expect(reserve.totalBudget).to.equal(usdc("10000"));
     expect(reserve.spent).to.equal(0);
     expect(reserve.active).to.equal(false);
-    expect(await dryPowder.getReserveThresholds(maker.address, RESERVE_ID)).to.deep.equal(thresholds);
-    expect(await dryPowder.getReserveMultipliersBps(maker.address, RESERVE_ID)).to.deep.equal(multipliers);
   });
 
   it("adds overcommitted ETH, WBTC, and LINK legs before activation", async function () {
     const { maker, dryPowder, mUSDC, mETH, mWBTC, mLINK } = await loadFixture(deployLifecycleFixture);
-    await dryPowder.createReserve(
-      RESERVE_ID,
-      await mUSDC.getAddress(),
-      ethers.parseUnits("10000", 6),
-      [ethers.parseUnits("4000", 6), ethers.parseUnits("7500", 6), ethers.parseUnits("10000", 6)],
-      [10000, 9500, 9000]
-    );
+    await dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), usdc("10000"));
 
-    await expect(dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), ethers.parseUnits("6000", 6)))
+    await expect(dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), singleCap("6000"), fullPrice))
       .to.emit(dryPowder, "LegAdded")
-      .withArgs(maker.address, RESERVE_ID, await mETH.getAddress(), ethers.parseUnits("6000", 6));
-    await dryPowder.addLeg(RESERVE_ID, await mWBTC.getAddress(), ethers.parseUnits("6000", 6));
-    await dryPowder.addLeg(RESERVE_ID, await mLINK.getAddress(), ethers.parseUnits("4000", 6));
+      .withArgs(maker.address, RESERVE_ID, await mETH.getAddress(), usdc("6000"));
+    await dryPowder.addLeg(RESERVE_ID, await mWBTC.getAddress(), singleCap("6000"), fullPrice);
+    await dryPowder.addLeg(RESERVE_ID, await mLINK.getAddress(), singleCap("4000"), fullPrice);
 
-    expect((await dryPowder.getLeg(maker.address, RESERVE_ID, await mETH.getAddress())).maxSpend).to.equal(ethers.parseUnits("6000", 6));
-    expect((await dryPowder.getLeg(maker.address, RESERVE_ID, await mWBTC.getAddress())).maxSpend).to.equal(ethers.parseUnits("6000", 6));
-    expect((await dryPowder.getLeg(maker.address, RESERVE_ID, await mLINK.getAddress())).maxSpend).to.equal(ethers.parseUnits("4000", 6));
+    expect((await dryPowder.getLeg(maker.address, RESERVE_ID, await mETH.getAddress())).maxSpend).to.equal(usdc("6000"));
+    expect(await dryPowder.getLegSpendCaps(maker.address, RESERVE_ID, await mETH.getAddress())).to.deep.equal(singleCap("6000"));
+    expect(await dryPowder.getLegPriceBps(maker.address, RESERVE_ID, await mETH.getAddress())).to.deep.equal(fullPrice);
+    expect((await dryPowder.getLeg(maker.address, RESERVE_ID, await mWBTC.getAddress())).maxSpend).to.equal(usdc("6000"));
+    expect((await dryPowder.getLeg(maker.address, RESERVE_ID, await mLINK.getAddress())).maxSpend).to.equal(usdc("4000"));
   });
 
   it("activates a reserve and prevents recreating it", async function () {
     const { maker, dryPowder, mUSDC, mETH, mLINK } = await loadFixture(deployLifecycleFixture);
-    await dryPowder.createReserve(
-      RESERVE_ID,
-      await mUSDC.getAddress(),
-      ethers.parseUnits("10000", 6),
-      [ethers.parseUnits("4000", 6), ethers.parseUnits("7500", 6), ethers.parseUnits("10000", 6)],
-      [10000, 9500, 9000]
-    );
-    await dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), ethers.parseUnits("6000", 6));
+    await dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), usdc("10000"));
+    await dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), singleCap("6000"), fullPrice);
 
     await expect(dryPowder.activateReserve(RESERVE_ID))
       .to.emit(dryPowder, "ReserveActivated")
       .withArgs(maker.address, RESERVE_ID);
 
     expect((await dryPowder.getReserve(maker.address, RESERVE_ID)).active).to.equal(true);
-    await expect(dryPowder.addLeg(RESERVE_ID, await mLINK.getAddress(), ethers.parseUnits("4000", 6)))
+    await expect(dryPowder.addLeg(RESERVE_ID, await mLINK.getAddress(), singleCap("4000"), fullPrice))
       .to.emit(dryPowder, "LegAdded")
-      .withArgs(maker.address, RESERVE_ID, await mLINK.getAddress(), ethers.parseUnits("4000", 6));
-    await expect(dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), ethers.parseUnits("10000", 6), [ethers.parseUnits("10000", 6)], [10000]))
+      .withArgs(maker.address, RESERVE_ID, await mLINK.getAddress(), usdc("4000"));
+    await expect(dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), usdc("10000")))
       .to.be.revertedWithCustomError(dryPowder, "ReserveAlreadyExists");
   });
 
   it("adds, updates, and removes legs after reserve activation", async function () {
     const { maker, dryPowder, mUSDC, mETH, mWBTC } = await loadFixture(deployLifecycleFixture);
-    await dryPowder.createReserve(
-      RESERVE_ID,
-      await mUSDC.getAddress(),
-      ethers.parseUnits("10000", 6),
-      [ethers.parseUnits("10000", 6)],
-      [10000]
-    );
-    await dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), ethers.parseUnits("6000", 6));
+    await dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), usdc("10000"));
+    await dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), singleCap("6000"), fullPrice);
     await dryPowder.activateReserve(RESERVE_ID);
 
-    await expect(dryPowder.addLeg(RESERVE_ID, await mWBTC.getAddress(), ethers.parseUnits("5000", 6)))
+    await expect(dryPowder.addLeg(RESERVE_ID, await mWBTC.getAddress(), singleCap("5000"), fullPrice))
       .to.emit(dryPowder, "LegAdded")
-      .withArgs(maker.address, RESERVE_ID, await mWBTC.getAddress(), ethers.parseUnits("5000", 6));
+      .withArgs(maker.address, RESERVE_ID, await mWBTC.getAddress(), usdc("5000"));
 
-    await expect(dryPowder.updateLeg(RESERVE_ID, await mWBTC.getAddress(), ethers.parseUnits("4500", 6)))
+    await expect(dryPowder.updateLeg(RESERVE_ID, await mWBTC.getAddress(), singleCap("4500"), fullPrice))
       .to.emit(dryPowder, "LegUpdated")
-      .withArgs(maker.address, RESERVE_ID, await mWBTC.getAddress(), ethers.parseUnits("4500", 6));
+      .withArgs(maker.address, RESERVE_ID, await mWBTC.getAddress(), usdc("4500"));
 
     await expect(dryPowder.removeLeg(RESERVE_ID, await mWBTC.getAddress()))
       .to.emit(dryPowder, "LegRemoved")
@@ -116,14 +101,14 @@ describe("Phase 1 reserve lifecycle", function () {
   it("keeps the same reserveId isolated for different makers", async function () {
     const { maker, otherMaker, dryPowder, mUSDC, mETH, mLINK } = await loadFixture(deployLifecycleFixture);
 
-    await dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), ethers.parseUnits("10000", 6), [ethers.parseUnits("10000", 6)], [10000]);
-    await dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), ethers.parseUnits("6000", 6));
+    await dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), usdc("10000"));
+    await dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), singleCap("6000"), fullPrice);
 
-    await dryPowder.connect(otherMaker).createReserve(RESERVE_ID, await mUSDC.getAddress(), ethers.parseUnits("5000", 6), [ethers.parseUnits("5000", 6)], [9700]);
-    await dryPowder.connect(otherMaker).addLeg(RESERVE_ID, await mLINK.getAddress(), ethers.parseUnits("4000", 6));
+    await dryPowder.connect(otherMaker).createReserve(RESERVE_ID, await mUSDC.getAddress(), usdc("5000"));
+    await dryPowder.connect(otherMaker).addLeg(RESERVE_ID, await mLINK.getAddress(), singleCap("4000"), fullPrice);
 
-    expect((await dryPowder.getReserve(maker.address, RESERVE_ID)).totalBudget).to.equal(ethers.parseUnits("10000", 6));
-    expect((await dryPowder.getReserve(otherMaker.address, RESERVE_ID)).totalBudget).to.equal(ethers.parseUnits("5000", 6));
+    expect((await dryPowder.getReserve(maker.address, RESERVE_ID)).totalBudget).to.equal(usdc("10000"));
+    expect((await dryPowder.getReserve(otherMaker.address, RESERVE_ID)).totalBudget).to.equal(usdc("5000"));
     expect((await dryPowder.getLeg(maker.address, RESERVE_ID, await mLINK.getAddress())).exists).to.equal(false);
     expect((await dryPowder.getLeg(otherMaker.address, RESERVE_ID, await mLINK.getAddress())).exists).to.equal(true);
   });
@@ -131,22 +116,24 @@ describe("Phase 1 reserve lifecycle", function () {
   it("rejects invalid lifecycle inputs", async function () {
     const { dryPowder, mUSDC, mETH } = await loadFixture(deployLifecycleFixture);
 
-    await expect(dryPowder.createReserve(ethers.ZeroHash, await mUSDC.getAddress(), 1, [1], [10000]))
+    await expect(dryPowder.createReserve(ethers.ZeroHash, await mUSDC.getAddress(), 1))
       .to.be.revertedWithCustomError(dryPowder, "InvalidReserveId");
-    await expect(dryPowder.createReserve(RESERVE_ID, ethers.ZeroAddress, 1, [1], [10000]))
+    await expect(dryPowder.createReserve(RESERVE_ID, ethers.ZeroAddress, 1))
       .to.be.revertedWithCustomError(dryPowder, "InvalidReserveToken");
-    await expect(dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), 0, [1], [10000]))
+    await expect(dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), 0))
       .to.be.revertedWithCustomError(dryPowder, "InvalidTotalBudget");
-    await expect(dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), 1, [1, 2], [10000]))
-      .to.be.revertedWithCustomError(dryPowder, "InvalidTranches");
 
-    await dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), 1, [1], [10000]);
-    await expect(dryPowder.addLeg(RESERVE_ID, ethers.ZeroAddress, 1))
+    await dryPowder.createReserve(RESERVE_ID, await mUSDC.getAddress(), 1);
+    await expect(dryPowder.addLeg(RESERVE_ID, ethers.ZeroAddress, [1], fullPrice))
       .to.be.revertedWithCustomError(dryPowder, "InvalidLegToken");
-    await expect(dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), 0))
-      .to.be.revertedWithCustomError(dryPowder, "InvalidLegMaxSpend");
-    await dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), 1);
-    await expect(dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), 1))
+    await expect(dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), [], []))
+      .to.be.revertedWithCustomError(dryPowder, "InvalidLegLadder");
+    await expect(dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), [1, 1], [10000, 9000]))
+      .to.be.revertedWithCustomError(dryPowder, "InvalidLegLadder");
+    await expect(dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), [1, 2], [9000, 8000]))
+      .to.be.revertedWithCustomError(dryPowder, "InvalidLegLadder");
+    await dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), [1], fullPrice);
+    await expect(dryPowder.addLeg(RESERVE_ID, await mETH.getAddress(), [1], fullPrice))
       .to.be.revertedWithCustomError(dryPowder, "LegAlreadyExists");
     await expect(dryPowder.activateReserve(ethers.id("missing")))
       .to.be.revertedWithCustomError(dryPowder, "ReserveNotFound");

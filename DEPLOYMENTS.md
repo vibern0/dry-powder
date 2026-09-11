@@ -3,28 +3,35 @@
 ## Ethereum Sepolia
 
 - Chain ID: `11155111`
-- Aqua registry: `0x1111113ccf1426a8e30e2bff5e005d929bf6a90a`
-- DryPowderRouter: `0xbf5E9Ec40cD683EB02215759708751E61A655A9B`
-- WETHMock: `0xE095Fd1D7Ec2954Bf19dDe5575866e5b4f76d0E3`
-- mUSDC: `0x5b9d76B3517D04AAD311E5197eEEb801c8C133D4`
-- mETH: `0x2782E69ab9456CD1505f3598eaAb18BF63146683`
-- mWBTC: `0xc847B5a5A8916C40c77d71Ef3312356991414c36`
-- mLINK: `0x406A43BfE9fFA7204a3d5503d3D6379D4ADC0353`
+- Aqua registry: `0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a`
+- DryPowderRouter: `0x5d1e7bCc9a9AD87FE2Cba803EDe1cE59232471E9`
+- WETHMock: `0x49fc3b2323D58048E7688bA8fb9bB44b2Cc565e9`
+- mUSDC: `0xb189B7E78dC904CBA4B634679103e785A6f8EC70`
+- mETH: `0xf392324D1e4018eD623AF5efb941AE2936c0Bdad`
+- mWBTC: `0xC048c28F581943b191B61bA05fda3101948d4dd7`
+- mLINK: `0x235e2E846a9FB5D5E4e8548e204ba4fCadBb96a4`
+- mARB: `0xbd626DE1Ad9b03108E5E42cC19c85cf664E07691`
+- mOP: `0xcA7813d6D5fcb52DBd767D8b758953734Ac7D385`
+- mBNB: `0x8A4b5e0d1FD4f8AF315DE11cEcDd3001337daD78`
+- mSOL: `0x18d35f66E15009DB7B21Bdbd8a93048215b9d5e3`
 
 Transactions:
 
-- WETHMock: `0x67c0b1c30827a746b68dea6cb68ee6e7ebb5279471f623a02d7c965b4a1a26b8`
-- DryPowderRouter: `0x0be4d6e9ed1981c1766c314719512d1ca74e4c1af21dd366e284aff68d38f18e`
-- mUSDC: `0x8b89a6b8b3553fea94ebee256fe78ce132d6b2566637c2c91a9110fca7d83ffa`
-- mETH: `0xc40a65860a34c682f1bac7aa4ab00317f7c1acd51131635f9590dc2b6c2df9cb`
-- mWBTC: `0xd2030ea559c706666abede67bdb3a423e483a2b10961b9c056787a7fb3a86bee`
-- mLINK: `0x763122564721b79b2e93220eee6fc8ef6e24e81199a69f78a32e0febd04ab22b`
+- WETHMock: `0xd650239d4c9e943d6f747c9e7763e544283caf0a007167a77425c86c619b7df2`
+- DryPowderRouter: `0xd9114bd0ec954ace26d35d89bf2384c89996b99609a24ec1c7ea890ce7877d26`
+- mUSDC: `0x3c2bd8542828f1858e5571e76da17830ab432bf39d57f24787ada7428d08ab94`
+- mETH: `0xe0bafe5d104a2577f2924f90071d37f41fe6f19edfae2b97e19dcb840f8e40bc`
+- mWBTC: `0x97f88585c9b0e95616e2d76c6f7ea0dde7f5dd0457a6b377710fa8b8e0109734`
+- mLINK: `0x7652131a48892e949bd9591b5b6096aeb8d3fe37c379b57bf86f1081943a7c0d`
+- mARB: `0xd64c94f5c530a5d09a0127e1bf7080ad6ca4cc402ff8c1a4bf9e0d7e35fb0e93`
+- mOP: `0x26fe50dc9644f20cd0cf527b7e27c428975e5c0aac01bc15f9ac14958959a254`
+- mBNB: `0xe96a849038c26b6029125e20146b9368b32744b7600466c5d5148d43e790330a`
+- mSOL: `0xb5be7badfc8ddd7105349a0770c1d80abe28c9cc99ab4a83790371bc432ab60c`
 
 Demo status:
 
-- `pn sepolia:setup` succeeded.
-- `pn sepolia:quote` returned initial ETH, WBTC, and LINK quotes.
-- `pn sepolia:fill` filled the ETH leg for `4000.0 mUSDC`.
-- `pn sepolia:reprice` showed WBTC and LINK sibling repricing at the `95%` tranche.
+- Fresh deployment complete for the per-asset ladder contract API.
+- `pn sepolia:setup` succeeded for the fresh deployment.
+- `pn sepolia:quote` returned ETH, WBTC, LINK, ARB, OP, BNB, and SOL ladder quotes.
 
 Note: maker and taker were the same wallet for this first Sepolia run.

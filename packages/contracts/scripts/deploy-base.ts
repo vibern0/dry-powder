@@ -23,15 +23,22 @@ async function main() {
 
   const MockERC20 = await ethers.getContractFactory("MockERC20");
   const mUSDC = await MockERC20.deploy("Mock USDC", "mUSDC", 6);
-  const mETH = await MockERC20.deploy("Mock Ether", "mETH", 18);
-  const mWBTC = await MockERC20.deploy("Mock Wrapped Bitcoin", "mWBTC", 8);
-  const mLINK = await MockERC20.deploy("Mock Chainlink", "mLINK", 18);
-  await Promise.all([
-    mUSDC.waitForDeployment(),
-    mETH.waitForDeployment(),
-    mWBTC.waitForDeployment(),
-    mLINK.waitForDeployment()
-  ]);
+  const assetSpecs = [
+    ["mETH", "Mock Ether", "mETH", 18],
+    ["mWBTC", "Mock Wrapped Bitcoin", "mWBTC", 8],
+    ["mLINK", "Mock Chainlink", "mLINK", 18],
+    ["mARB", "Mock Arbitrum", "mARB", 18],
+    ["mOP", "Mock Optimism", "mOP", 18],
+    ["mBNB", "Mock BNB", "mBNB", 18],
+    ["mSOL", "Mock Solana", "mSOL", 18]
+  ] as const;
+  const assets: Record<string, any> = {};
+  for (const [key, name, symbol, decimals] of assetSpecs) {
+    const token = await MockERC20.deploy(name, symbol, decimals);
+    await token.waitForDeployment();
+    assets[key] = token;
+  }
+  await mUSDC.waitForDeployment();
 
   await mUSDC.mint(maker.address, ethers.parseUnits("10000", 6));
   await mUSDC.connect(maker).approve(await aqua.getAddress(), ethers.MaxUint256);
@@ -45,9 +52,7 @@ async function main() {
     weth: await weth.getAddress(),
     tokens: {
       mUSDC: await mUSDC.getAddress(),
-      mETH: await mETH.getAddress(),
-      mWBTC: await mWBTC.getAddress(),
-      mLINK: await mLINK.getAddress()
+      ...Object.fromEntries(await Promise.all(Object.entries(assets).map(async ([key, token]) => [key, await token.getAddress()])))
     }
   }, null, 2));
 }

@@ -1,14 +1,18 @@
 import type { Address } from "viem";
 
 export const SEPOLIA_CHAIN_ID = 11155111;
-export const AQUA_ADDRESS = "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a" as Address;
-export const DRY_POWDER_ROUTER = "0xbf5E9Ec40cD683EB02215759708751E61A655A9B" as Address;
+export const AQUA_ADDRESS = "0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a" as Address;
+export const DRY_POWDER_ROUTER = "0x5d1e7bCc9a9AD87FE2Cba803EDe1cE59232471E9" as Address;
 
 export const TOKENS = {
-  mUSDC: "0x5b9d76B3517D04AAD311E5197eEEb801c8C133D4",
-  mETH: "0x2782E69ab9456CD1505f3598eaAb18BF63146683",
-  mWBTC: "0xc847B5a5A8916C40c77d71Ef3312356991414c36",
-  mLINK: "0x406A43BfE9fFA7204a3d5503d3D6379D4ADC0353"
+  mUSDC: "0xb189B7E78dC904CBA4B634679103e785A6f8EC70",
+  mETH: "0xf392324D1e4018eD623AF5efb941AE2936c0Bdad",
+  mWBTC: "0xC048c28F581943b191B61bA05fda3101948d4dd7",
+  mLINK: "0x235e2E846a9FB5D5E4e8548e204ba4fCadBb96a4",
+  mARB: "0xbd626DE1Ad9b03108E5E42cC19c85cf664E07691",
+  mOP: "0xcA7813d6D5fcb52DBd767D8b758953734Ac7D385",
+  mBNB: "0x8A4b5e0d1FD4f8AF315DE11cEcDd3001337daD78",
+  mSOL: "0x18d35f66E15009DB7B21Bdbd8a93048215b9d5e3"
 } as const satisfies Record<string, Address>;
 
 export const DRY_POWDER_OPCODE = 0x34;
@@ -28,9 +32,7 @@ export const ROUTER_ABI = [
     inputs: [
       { name: "reserveId", type: "bytes32" },
       { name: "reserveToken", type: "address" },
-      { name: "totalBudget", type: "uint256" },
-      { name: "thresholds", type: "uint256[]" },
-      { name: "multipliersBps", type: "uint256[]" }
+      { name: "totalBudget", type: "uint256" }
     ],
     outputs: []
   },
@@ -41,7 +43,8 @@ export const ROUTER_ABI = [
     inputs: [
       { name: "reserveId", type: "bytes32" },
       { name: "token", type: "address" },
-      { name: "maxSpend", type: "uint256" }
+      { name: "spendCaps", type: "uint256[]" },
+      { name: "priceBps", type: "uint256[]" }
     ],
     outputs: []
   },
@@ -52,9 +55,32 @@ export const ROUTER_ABI = [
     inputs: [
       { name: "reserveId", type: "bytes32" },
       { name: "token", type: "address" },
-      { name: "maxSpend", type: "uint256" }
+      { name: "spendCaps", type: "uint256[]" },
+      { name: "priceBps", type: "uint256[]" }
     ],
     outputs: []
+  },
+  {
+    type: "function",
+    name: "getLegSpendCaps",
+    stateMutability: "view",
+    inputs: [
+      { name: "maker", type: "address" },
+      { name: "reserveId", type: "bytes32" },
+      { name: "token", type: "address" }
+    ],
+    outputs: [{ name: "", type: "uint256[]" }]
+  },
+  {
+    type: "function",
+    name: "getLegPriceBps",
+    stateMutability: "view",
+    inputs: [
+      { name: "maker", type: "address" },
+      { name: "reserveId", type: "bytes32" },
+      { name: "token", type: "address" }
+    ],
+    outputs: [{ name: "", type: "uint256[]" }]
   },
   {
     type: "function",

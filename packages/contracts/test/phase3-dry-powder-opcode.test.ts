@@ -7,6 +7,14 @@ const DRY_POWDER_OPCODE = 0x34;
 const SALT_OPCODE = 0x1e;
 const RESERVE_ID = ethers.id("phase3:reserve");
 
+function usdc(amount: string) {
+  return ethers.parseUnits(amount, 6);
+}
+
+function singleCap(amount: string) {
+  return [usdc(amount)];
+}
+
 async function deployDryPowderFixture() {
   const [owner, maker, taker] = await ethers.getSigners();
 
@@ -32,14 +40,8 @@ async function deployDryPowderFixture() {
 
 async function createActiveReserve(fixture: Awaited<ReturnType<typeof deployDryPowderFixture>>, legMaxSpend = "6000") {
   const { router, mUSDC, mETH } = fixture;
-  await router.connect(fixture.maker).createReserve(
-    RESERVE_ID,
-    await mUSDC.getAddress(),
-    ethers.parseUnits("10000", 6),
-    [ethers.parseUnits("4000", 6), ethers.parseUnits("7500", 6), ethers.parseUnits("10000", 6)],
-    [10000, 9500, 9000]
-  );
-  await router.connect(fixture.maker).addLeg(RESERVE_ID, await mETH.getAddress(), ethers.parseUnits(legMaxSpend, 6));
+  await router.connect(fixture.maker).createReserve(RESERVE_ID, await mUSDC.getAddress(), usdc("10000"));
+  await router.connect(fixture.maker).addLeg(RESERVE_ID, await mETH.getAddress(), singleCap(legMaxSpend), [10000]);
   await router.connect(fixture.maker).activateReserve(RESERVE_ID);
 }
 
@@ -117,7 +119,36 @@ async function quoteEthForUsdc(
   return fixture.router.quote.staticCall(order, amount, takerTraits);
 }
 
+function expectWithinOneBaseUnit(actual: bigint, expected: bigint) {
+  expect(actual).to.be.gte(expected);
+  expect(actual).to.be.lte(expected + 1n);
+}
+
 describe("Phase 3 Dry Powder opcode", function () {
+  it("uses per-leg ladder rows instead of a global reserve price curve", async function () {
+    const fixture = await loadFixture(deployDryPowderFixture);
+    const tokenIn = await fixture.mETH.getAddress();
+    const tokenOut = await fixture.mUSDC.getAddress();
+    await fixture.router.connect(fixture.maker).createReserve(RESERVE_ID, tokenOut, usdc("10000"));
+    await fixture.router.connect(fixture.maker).addLeg(
+      RESERVE_ID,
+      tokenIn,
+      [usdc("4000"), usdc("7000"), usdc("10000")],
+      [10000, 9230, 6923]
+    );
+    await fixture.router.connect(fixture.maker).activateReserve(RESERVE_ID);
+
+    const { order, takerTraits } = await buildOrder(fixture, tokenIn, tokenOut, ethers.parseEther("0.153846153846153846"), usdc("10000"), false);
+    await shipOrder(fixture, order, tokenIn, tokenOut, ethers.parseEther("0.153846153846153846"), usdc("10000"));
+
+    const firstQuote = await fixture.router.quote.staticCall(order, usdc("4000"), takerTraits);
+    expect(firstQuote[1]).to.equal(usdc("4000"));
+    await fixture.router.connect(fixture.taker).swap(order, usdc("4000"), takerTraits);
+
+    const secondQuote = await fixture.router.quote.staticCall(order, usdc("3000"), takerTraits);
+    expect(secondQuote[1]).to.equal(usdc("3000"));
+  });
+
   it("caps quote by the current tranche and does not mutate state", async function () {
     const fixture = await loadFixture(deployDryPowderFixture);
     await createActiveReserve(fixture, "10000");
@@ -147,7 +178,7 @@ describe("Phase 3 Dry Powder opcode", function () {
     expect((await fixture.router.getLeg(fixture.maker.address, RESERVE_ID, tokenIn)).spent).to.equal(ethers.parseUnits("4000", 6));
   });
 
-  it("applies the active tranche multiplier after previous spending", async function () {
+  it("keeps a single-row leg at its entry price after previous spending", async function () {
     const fixture = await loadFixture(deployDryPowderFixture);
     await createActiveReserve(fixture, "10000");
     const tokenIn = await fixture.mETH.getAddress();
@@ -158,7 +189,7 @@ describe("Phase 3 Dry Powder opcode", function () {
 
     const secondQuote = await quoteEthForUsdc(fixture, ethers.parseEther("1"), true, "1", "2700", 2n);
 
-    expect(secondQuote[1]).to.equal(ethers.parseUnits("2565", 6));
+    expect(secondQuote[1]).to.equal(ethers.parseUnits("2700", 6));
   });
 
   it("caps quote by leg remaining and maker wallet balance", async function () {
@@ -181,8 +212,8 @@ describe("Phase 3 Dry Powder opcode", function () {
     await expect(fixture.router.quote.staticCall(order, ethers.parseEther("1"), takerTraits))
       .to.be.revertedWithCustomError(fixture.router, "ReserveNotFound");
 
-    await fixture.router.connect(fixture.maker).createReserve(RESERVE_ID, tokenOut, ethers.parseUnits("10000", 6), [ethers.parseUnits("10000", 6)], [10000]);
-    await fixture.router.connect(fixture.maker).addLeg(RESERVE_ID, tokenIn, ethers.parseUnits("6000", 6));
+    await fixture.router.connect(fixture.maker).createReserve(RESERVE_ID, tokenOut, usdc("10000"));
+    await fixture.router.connect(fixture.maker).addLeg(RESERVE_ID, tokenIn, singleCap("6000"), [10000]);
     await expect(fixture.router.quote.staticCall(order, ethers.parseEther("1"), takerTraits))
       .to.be.revertedWithCustomError(fixture.router, "ReserveInactive");
     await fixture.router.connect(fixture.maker).activateReserve(RESERVE_ID);
