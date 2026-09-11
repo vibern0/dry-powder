@@ -53,6 +53,8 @@ export type TransactionUpdate = {
 
 type SendUpdate = (update: TransactionUpdate) => void;
 
+const WALLET_CONNECTION_KEY = "dry-powder.wallet-connected";
+
 declare global {
   interface Window {
     ethereum?: EIP1193Provider;
@@ -64,17 +66,26 @@ export function hasInjectedWallet() {
 }
 
 export async function connectWallet(): Promise<WalletState> {
-  const provider = getProvider();
-  const accounts = await provider.request({ method: "eth_requestAccounts" }) as Address[];
-  const chainHex = await provider.request({ method: "eth_chainId" }) as Hex;
-  const account = accounts[0] ? getAddress(accounts[0]) : undefined;
-  if (!account) throw new Error("No wallet account returned.");
+  const wallet = await readWalletState("eth_requestAccounts");
+  window.localStorage.setItem(WALLET_CONNECTION_KEY, "true");
+  return wallet;
+}
 
-  return {
-    account,
-    chainId: Number.parseInt(chainHex, 16),
-    ...(await readGasBalance(account))
-  };
+export async function reconnectWallet(): Promise<WalletState | null> {
+  if (window.localStorage.getItem(WALLET_CONNECTION_KEY) !== "true") return null;
+
+  const provider = getProvider();
+  const accounts = await provider.request({ method: "eth_accounts" }) as Address[];
+  if (accounts.length === 0) {
+    forgetWalletConnection();
+    return null;
+  }
+
+  return readWalletState("eth_accounts", accounts);
+}
+
+export function forgetWalletConnection() {
+  window.localStorage.removeItem(WALLET_CONNECTION_KEY);
 }
 
 export async function switchToSepolia() {
@@ -427,6 +438,20 @@ async function readGasBalance(account: Address) {
   const publicClient = createPublicClient({ chain: sepolia, transport: custom(getProvider()) });
   const gasBalance = await publicClient.getBalance({ address: account });
   return { gasBalance, gasBalanceLabel: formatEthBalance(gasBalance) };
+}
+
+async function readWalletState(accountsMethod: "eth_requestAccounts" | "eth_accounts", knownAccounts?: Address[]): Promise<WalletState> {
+  const provider = getProvider();
+  const accounts = knownAccounts ?? await provider.request({ method: accountsMethod }) as Address[];
+  const chainHex = await provider.request({ method: "eth_chainId" }) as Hex;
+  const account = accounts[0] ? getAddress(accounts[0]) : undefined;
+  if (!account) throw new Error("No wallet account returned.");
+
+  return {
+    account,
+    chainId: Number.parseInt(chainHex, 16),
+    ...(await readGasBalance(account))
+  };
 }
 
 function parseAsset(amount: string, key: LegKey) {

@@ -1,5 +1,5 @@
 import { ArrowRight, Check, Coins, Droplets, Gauge, RotateCcw, Settings, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   formatUsd,
   getFillAmountDefault,
@@ -22,12 +22,14 @@ import {
   createFreshMakerSession,
   editStrategy,
   executeFillForMaker,
+  forgetWalletConnection,
   getOrCreateMakerSession,
   hasInjectedWallet,
   mintMakerReserveTokens,
   mintTakerAssetTokens,
   quoteStrategies,
   readOnchainSnapshot,
+  reconnectWallet,
   removeStrategy,
   switchToSepolia,
   useConnectedAccountAsMaker,
@@ -38,6 +40,7 @@ import {
 } from "./onchain/client";
 import { SEPOLIA_CHAIN_ID, TOKENS } from "./onchain/constants";
 import { roleForAccount, strategyInputs, strategyKeys } from "./onchain/strategy";
+import { restoreWalletSession } from "./onchain/walletRestore";
 
 type DemoPage = "maker" | "taker" | "setup";
 
@@ -83,6 +86,33 @@ export function App() {
   const reserveId = makerSession?.reserveId;
   const fillableStrategyKeys = activeLegKeys.length ? activeLegKeys : strategyKeys;
 
+  useEffect(() => {
+    if (!hasInjectedWallet()) return;
+
+    let active = true;
+
+    void restoreWalletSession({
+      reconnectWallet,
+      forgetWalletConnection,
+      getOrCreateMakerSession,
+      loadSnapshot,
+      onWalletRestored: (next, session) => {
+        if (!active) return;
+        setWallet(next);
+        setMakerSession(session);
+        setEventLog([{ step: "quote", message: `Wallet restored as ${roleForAccount(next.account, session.maker)}: ${shortAddress(next.account)}` }]);
+      },
+      onSnapshotError: (caught) => {
+        if (!active) return;
+        setError(caught instanceof Error ? caught.message : "Could not refresh on-chain snapshot.");
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   async function connect() {
     await run("connect", async () => {
       const next = await connectWallet();
@@ -95,6 +125,7 @@ export function App() {
   }
 
   function disconnect() {
+    forgetWalletConnection();
     setWallet(null);
     setQuotes(null);
     setError(null);
