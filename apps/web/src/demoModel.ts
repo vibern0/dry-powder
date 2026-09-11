@@ -183,8 +183,12 @@ export function isStrategySetOvercommitted(draft: StrategySetDraft, reserveBalan
   return getStrategySetExposure(draft, reserveBalance).ratio > 1.5;
 }
 
-export function selectActiveStrategyKeys(keys: LegKey[], legs: Record<LegKey, { exists: boolean }>): LegKey[] {
-  return keys.filter((key) => legs[key].exists);
+export function selectActiveStrategyKeys(
+  keys: LegKey[],
+  legs: Record<LegKey, { exists: boolean }>,
+  shipped: Partial<Record<LegKey, boolean>> = {}
+): LegKey[] {
+  return keys.filter((key) => legs[key].exists && shipped[key] === true);
 }
 
 export function applyLegSnapshot(leg: Leg, snapshot: LegSnapshot): Leg {
@@ -205,6 +209,10 @@ export function applyLegSnapshot(leg: Leg, snapshot: LegSnapshot): Leg {
 
 export function getFillAmountDefault(asset: LegKey): string {
   return assetByKey[asset]?.fillAmount ?? "";
+}
+
+export function getInitialFillAmount(asset: LegKey): string {
+  return getFillAmountDefault(asset);
 }
 
 function toSnapshotLadder(leg: Leg, spendCaps?: readonly bigint[], priceBps?: readonly bigint[]) {

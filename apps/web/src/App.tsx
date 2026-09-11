@@ -6,6 +6,7 @@ import {
   enableStrategySetAsset,
   formatUsd,
   getFillAmountDefault,
+  getInitialFillAmount,
   getStrategyDraftSpendTotal,
   getStrategySetDraftDefaults,
   getStrategySetExposure,
@@ -75,7 +76,7 @@ export function App() {
   const [strategyModalOpen, setStrategyModalOpen] = useState(false);
   const [strategyDraft, setStrategyDraft] = useState<StrategySetDraft>(() => getStrategySetDraftDefaults([]));
   const [fillAsset, setFillAsset] = useState<LegKey>(firstStrategyKey);
-  const [fillAmount, setFillAmount] = useState("4000");
+  const [fillAmount, setFillAmount] = useState(() => getInitialFillAmount(firstStrategyKey));
   const [makerReserveBalance, setMakerReserveBalance] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const reserveCreated = Boolean(completed.createReserve);
@@ -183,7 +184,7 @@ export function App() {
     const snapshot = await readOnchainSnapshot(target.maker, target.reserveId);
     setState(applySnapshot(snapshot.reserve, snapshot.legs));
     setMakerReserveBalance(formatTokenAmount(snapshot.balances[TOKENS.mUSDC]));
-    const nextActiveLegKeys = selectActiveStrategyKeys(strategyKeys, snapshot.legs);
+    const nextActiveLegKeys = selectActiveStrategyKeys(strategyKeys, snapshot.legs, snapshot.shipped);
     setActiveLegKeys(nextActiveLegKeys);
     setFillAsset((current) => {
       if (nextActiveLegKeys.includes(current) || nextActiveLegKeys.length === 0) return current;

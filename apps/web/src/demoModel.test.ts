@@ -8,6 +8,7 @@ import {
   getStrategyDraftSpendTotal,
   getStrategySetDraftDefaults,
   getStrategySetExposure,
+  getInitialFillAmount,
   initialDemo,
   isStrategySetOvercommitted,
   selectActiveStrategyKeys,
@@ -72,6 +73,11 @@ describe("demo model", () => {
     });
   });
 
+  it("starts fills with the selected asset default amount", () => {
+    expect(getInitialFillAmount("eth")).toBe("2000");
+    expect(getInitialFillAmount("wbtc")).toBe("4000");
+  });
+
   it("sums the draft max spend across all strategy tiers", () => {
     expect(getStrategyDraftSpendTotal({
       asset: "eth",
@@ -124,12 +130,22 @@ describe("demo model", () => {
     expect(isStrategySetOvercommitted(aboveLimit, 10000)).toBe(true);
   });
 
-  it("keeps every existing onchain leg active after refresh", () => {
+  it("keeps every existing and shipped onchain leg active after refresh", () => {
     const legs = Object.fromEntries(
       initialDemo.legs.map((leg) => [leg.key, { exists: leg.key === "eth" || leg.key === "wbtc" }])
     ) as Record<string, { exists: boolean }>;
+    const shipped = { eth: true, wbtc: true, link: false };
 
-    expect(selectActiveStrategyKeys(["eth", "wbtc", "link"], legs)).toEqual(["eth", "wbtc"]);
+    expect(selectActiveStrategyKeys(["eth", "wbtc", "link"], legs, shipped)).toEqual(["eth", "wbtc"]);
+  });
+
+  it("does not mark unshipped legs fillable", () => {
+    const legs = Object.fromEntries(
+      initialDemo.legs.map((leg) => [leg.key, { exists: leg.key === "eth" || leg.key === "wbtc" }])
+    ) as Record<string, { exists: boolean }>;
+    const shipped = { eth: false, wbtc: true, link: false };
+
+    expect(selectActiveStrategyKeys(["eth", "wbtc", "link"], legs, shipped)).toEqual(["wbtc"]);
   });
 
   it("rebuilds an edited ladder from onchain cumulative caps and price bps", () => {
