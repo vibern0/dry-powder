@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   applyFill,
+  applyLegSnapshot,
+  disableStrategySetAsset,
+  enableStrategySetAsset,
   getStrategyDraftDefaults,
   getStrategyDraftSpendTotal,
   getStrategySetDraftDefaults,
   getStrategySetExposure,
   initialDemo,
   isStrategySetOvercommitted,
+  selectActiveStrategyKeys,
   selectLadderRow,
   summarizeReserve
 } from "./demoModel";
@@ -94,6 +98,16 @@ describe("demo model", () => {
     expect(draft.assets.find((asset) => asset.asset === "wbtc")?.ladder.map((row) => row.maxSpend)).toEqual(["", "", ""]);
   });
 
+  it("adds and removes assets from the visible strategy set without default spend", () => {
+    const draft = getStrategySetDraftDefaults(["eth"]);
+    const withWbtc = enableStrategySetAsset(draft, "wbtc");
+    const withoutEth = disableStrategySetAsset(withWbtc, "eth");
+
+    expect(withWbtc.assets.find((asset) => asset.asset === "wbtc")?.enabled).toBe(true);
+    expect(withWbtc.assets.find((asset) => asset.asset === "wbtc")?.ladder.map((row) => row.maxSpend)).toEqual(["", "", ""]);
+    expect(withoutEth.assets.find((asset) => asset.asset === "eth")?.enabled).toBe(false);
+  });
+
   it("sums only enabled assets in the strategy set exposure", () => {
     const draft = getStrategySetDraftDefaults(["eth", "link"]);
     const exposure = getStrategySetExposure(draft, 10000);
@@ -108,5 +122,27 @@ describe("demo model", () => {
 
     expect(isStrategySetOvercommitted(belowLimit, 10000)).toBe(false);
     expect(isStrategySetOvercommitted(aboveLimit, 10000)).toBe(true);
+  });
+
+  it("keeps every existing onchain leg active after refresh", () => {
+    const legs = Object.fromEntries(
+      initialDemo.legs.map((leg) => [leg.key, { exists: leg.key === "eth" || leg.key === "wbtc" }])
+    ) as Record<string, { exists: boolean }>;
+
+    expect(selectActiveStrategyKeys(["eth", "wbtc", "link"], legs)).toEqual(["eth", "wbtc"]);
+  });
+
+  it("rebuilds an edited ladder from onchain cumulative caps and price bps", () => {
+    const wbtc = initialDemo.legs.find((leg) => leg.key === "wbtc")!;
+    const hydrated = applyLegSnapshot(wbtc, {
+      maxSpend: 16000000000n,
+      spent: 0n,
+      spendCaps: [4000000000n, 7000000000n, 16000000000n],
+      priceBps: [10000n, 9231n, 6923n]
+    });
+
+    expect(hydrated.maxSpend).toBe(16000);
+    expect(hydrated.ladder.map((row) => row.maxSpend)).toEqual([4000, 3000, 9000]);
+    expect(hydrated.ladder.map((row) => row.entryPrice)).toEqual([65000, 60000, 45000]);
   });
 });

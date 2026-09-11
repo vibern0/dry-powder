@@ -43,6 +43,13 @@ export type Leg = {
   allocationColor: string;
 };
 
+export type LegSnapshot = {
+  maxSpend: bigint;
+  spent: bigint;
+  spendCaps?: readonly bigint[];
+  priceBps?: readonly bigint[];
+};
+
 export type DemoState = {
   reserve: Reserve;
   legs: Leg[];
@@ -152,6 +159,18 @@ export function getStrategySetDraftDefaults(activeAssets: LegKey[]): StrategySet
   };
 }
 
+export function enableStrategySetAsset(draft: StrategySetDraft, asset: LegKey): StrategySetDraft {
+  return {
+    assets: draft.assets.map((assetDraft) => assetDraft.asset === asset ? { ...assetDraft, enabled: true } : assetDraft)
+  };
+}
+
+export function disableStrategySetAsset(draft: StrategySetDraft, asset: LegKey): StrategySetDraft {
+  return {
+    assets: draft.assets.map((assetDraft) => assetDraft.asset === asset ? { ...assetDraft, enabled: false } : assetDraft)
+  };
+}
+
 export function getStrategySetExposure(draft: StrategySetDraft, reserveBalance: number) {
   const virtualCap = draft.assets.reduce((sum, assetDraft) => assetDraft.enabled ? sum + getStrategyDraftSpendTotal(assetDraft) : sum, 0);
   return {
@@ -164,8 +183,46 @@ export function isStrategySetOvercommitted(draft: StrategySetDraft, reserveBalan
   return getStrategySetExposure(draft, reserveBalance).ratio > 1.5;
 }
 
+export function selectActiveStrategyKeys(keys: LegKey[], legs: Record<LegKey, { exists: boolean }>): LegKey[] {
+  return keys.filter((key) => legs[key].exists);
+}
+
+export function applyLegSnapshot(leg: Leg, snapshot: LegSnapshot): Leg {
+  const spent = Number(snapshot.spent) / 1_000_000;
+  const ladder = toSnapshotLadder(leg, snapshot.spendCaps, snapshot.priceBps);
+  const nextLeg = {
+    ...leg,
+    maxSpend: Number(snapshot.maxSpend) / 1_000_000,
+    spent,
+    ladder
+  };
+
+  return {
+    ...nextLeg,
+    currentMaxPrice: selectLadderRow(nextLeg).entryPrice
+  };
+}
+
 export function getFillAmountDefault(asset: LegKey): string {
   return assetByKey[asset]?.fillAmount ?? "";
+}
+
+function toSnapshotLadder(leg: Leg, spendCaps?: readonly bigint[], priceBps?: readonly bigint[]) {
+  if (!spendCaps?.length || spendCaps.length !== priceBps?.length) return leg.ladder;
+
+  let previousCap = 0n;
+  return spendCaps.map((cap, index) => {
+    const rowSpend = cap - previousCap;
+    const bps = Number(priceBps[index]);
+    const catalogEntryPrice = leg.ladder[index]?.entryPrice;
+    const catalogBps = catalogEntryPrice === undefined ? null : Math.round((catalogEntryPrice / leg.baseMaxPrice) * 10000);
+    previousCap = cap;
+    return {
+      entryPrice: catalogBps === bps && catalogEntryPrice !== undefined ? catalogEntryPrice : Math.round((leg.baseMaxPrice * bps) / 10000),
+      maxSpend: Number(rowSpend) / 1_000_000,
+      cumulativeMaxSpend: Number(cap) / 1_000_000
+    };
+  });
 }
 
 function toDemoLadder(ladder: StrategyLadderRow[]) {

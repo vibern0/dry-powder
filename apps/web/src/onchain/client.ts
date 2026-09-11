@@ -380,6 +380,26 @@ export async function readOnchainSnapshot(account: Address, reserveId: Hex) {
       })
     )
   );
+  const legSpendCaps = await Promise.all(
+    strategyKeys.map((key) =>
+      publicClient.readContract({
+        address: DRY_POWDER_ROUTER,
+        abi: ROUTER_ABI,
+        functionName: "getLegSpendCaps",
+        args: [account, reserveId, strategyInputs[key].asset]
+      })
+    )
+  );
+  const legPriceBps = await Promise.all(
+    strategyKeys.map((key) =>
+      publicClient.readContract({
+        address: DRY_POWDER_ROUTER,
+        abi: ROUTER_ABI,
+        functionName: "getLegPriceBps",
+        args: [account, reserveId, strategyInputs[key].asset]
+      })
+    )
+  );
   const balanceTokens = [TOKENS.mUSDC, ...strategyKeys.map((key) => strategyInputs[key].asset)];
   const balanceValues = await Promise.all(
     balanceTokens.map((token) =>
@@ -395,7 +415,11 @@ export async function readOnchainSnapshot(account: Address, reserveId: Hex) {
 
   return {
     reserve,
-    legs: Object.fromEntries(strategyKeys.map((key, index) => [key, legValues[index]])) as Record<LegKey, (typeof legValues)[number]>,
+    legs: Object.fromEntries(strategyKeys.map((key, index) => [key, {
+      ...legValues[index],
+      spendCaps: legSpendCaps[index],
+      priceBps: legPriceBps[index]
+    }])) as Record<LegKey, (typeof legValues)[number] & { spendCaps: bigint[]; priceBps: bigint[] }>,
     balances: Object.fromEntries(balanceTokens.map((token, index) => [token, balanceValues[index]])),
     shipped
   };

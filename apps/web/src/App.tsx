@@ -1,6 +1,9 @@
-import { ArrowRight, Check, Coins, Droplets, Gauge, RotateCcw, Settings, X } from "lucide-react";
+import { ArrowRight, Check, Coins, Droplets, Gauge, Plus, RotateCcw, Settings, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  applyLegSnapshot,
+  disableStrategySetAsset,
+  enableStrategySetAsset,
   formatUsd,
   getFillAmountDefault,
   getStrategyDraftSpendTotal,
@@ -8,6 +11,7 @@ import {
   getStrategySetExposure,
   initialDemo,
   isStrategySetOvercommitted,
+  selectActiveStrategyKeys,
   selectLadderRow,
   summarizeReserve,
   type DemoState,
@@ -179,7 +183,7 @@ export function App() {
     const snapshot = await readOnchainSnapshot(target.maker, target.reserveId);
     setState(applySnapshot(snapshot.reserve, snapshot.legs));
     setMakerReserveBalance(formatTokenAmount(snapshot.balances[TOKENS.mUSDC]));
-    const nextActiveLegKeys = strategyKeys.filter((key) => snapshot.legs[key].exists && snapshot.shipped[key]);
+    const nextActiveLegKeys = selectActiveStrategyKeys(strategyKeys, snapshot.legs);
     setActiveLegKeys(nextActiveLegKeys);
     setFillAsset((current) => {
       if (nextActiveLegKeys.includes(current) || nextActiveLegKeys.length === 0) return current;
@@ -228,8 +232,20 @@ export function App() {
   }
 
   function openStrategyModal() {
+    const legByKey = new Map(state.legs.map((leg) => [leg.key, leg]));
     setStrategyDraft((current) => ({
       assets: getStrategySetDraftDefaults(activeLegKeys).assets.map((defaultDraft) => {
+        const activeLeg = legByKey.get(defaultDraft.asset);
+        if (activeLegKeys.includes(defaultDraft.asset) && activeLeg) {
+          return {
+            ...defaultDraft,
+            enabled: true,
+            ladder: activeLeg.ladder.map((row) => ({
+              entryPrice: String(row.entryPrice),
+              maxSpend: String(row.maxSpend)
+            }))
+          };
+        }
         const currentDraft = current.assets.find((assetDraft) => assetDraft.asset === defaultDraft.asset);
         const hasCurrentSpend = currentDraft?.ladder.some((row) => row.maxSpend) ?? false;
         return activeLegKeys.includes(defaultDraft.asset) && currentDraft && hasCurrentSpend ? { ...currentDraft, enabled: true } : defaultDraft;
@@ -531,25 +547,14 @@ function RolePanel({
   );
 }
 
-function applySnapshot(reserveSnapshot: { totalBudget: bigint; spent: bigint }, legs: Record<LegKey, { maxSpend: bigint; spent: bigint }>): DemoState {
+function applySnapshot(reserveSnapshot: { totalBudget: bigint; spent: bigint }, legs: Record<LegKey, { maxSpend: bigint; spent: bigint; spendCaps?: readonly bigint[]; priceBps?: readonly bigint[] }>): DemoState {
   return {
     ...initialDemo,
     reserve: {
       totalBudget: Number(reserveSnapshot.totalBudget) / 1_000_000,
       spent: Number(reserveSnapshot.spent) / 1_000_000
     },
-    legs: initialDemo.legs.map((leg) => {
-      const spent = Number(legs[leg.key].spent) / 1_000_000;
-      const nextLeg = {
-        ...leg,
-        maxSpend: Number(legs[leg.key].maxSpend) / 1_000_000,
-        spent
-      };
-      return {
-        ...nextLeg,
-        currentMaxPrice: selectLadderRow(nextLeg).entryPrice
-      };
-    }),
+    legs: initialDemo.legs.map((leg) => applyLegSnapshot(leg, legs[leg.key])),
     eventLog: initialDemo.eventLog
   };
 }
@@ -593,12 +598,20 @@ function StrategyModal({
   const overcommitted = isStrategySetOvercommitted(draft, makerReserveBalance);
   const incomplete = draft.assets.some((asset) => asset.enabled && asset.ladder.some((row) => !row.entryPrice || !row.maxSpend));
   const disabled = pending !== null || incomplete || overcommitted;
+  const selectedAssets = draft.assets.filter((asset) => asset.enabled);
+  const availableAssets = draft.assets.filter((asset) => !asset.enabled);
+  const [assetToAdd, setAssetToAdd] = useState<LegKey | "">(availableAssets[0]?.asset ?? "");
 
-  function toggleAsset(asset: LegKey, enabled: boolean) {
-    onChange({
-      ...draft,
-      assets: draft.assets.map((assetDraft) => assetDraft.asset === asset ? { ...assetDraft, enabled } : assetDraft)
-    });
+  function addAsset() {
+    const asset = availableAssets.some((assetDraft) => assetDraft.asset === assetToAdd) ? assetToAdd : availableAssets[0]?.asset;
+    if (!asset) return;
+    onChange(enableStrategySetAsset(draft, asset));
+    setAssetToAdd(availableAssets.find((assetDraft) => assetDraft.asset !== asset)?.asset ?? "");
+  }
+
+  function removeAsset(asset: LegKey) {
+    onChange(disableStrategySetAsset(draft, asset));
+    setAssetToAdd((current) => current || asset);
   }
 
   function updateRow(asset: LegKey, index: number, field: "entryPrice" | "maxSpend", value: string) {
@@ -648,32 +661,61 @@ function StrategyModal({
             Virtual exposure is above 1.5x mUSDC balance. Set strategy is disabled to avoid excessive reverting fills.
           </div>
         ) : null}
+        <div className="strategy-set-toolbar">
+          <span>{selectedAssets.length} selected</span>
+          {availableAssets.length ? (
+            <div className="asset-add-control">
+              <select className="select-input" value={assetToAdd || (availableAssets[0]?.asset ?? "")} onChange={(event) => setAssetToAdd(event.target.value as LegKey)} disabled={pending !== null}>
+                {availableAssets.map((assetDraft) => (
+                  <option value={assetDraft.asset} key={assetDraft.asset}>{strategyInputs[assetDraft.asset].label}</option>
+                ))}
+              </select>
+              <button type="button" className="icon-action" onClick={addAsset} aria-label="Add asset" title="Add asset" disabled={pending !== null}>
+                <Plus size={17} />
+              </button>
+            </div>
+          ) : null}
+        </div>
         <div className="strategy-set-editor">
-          {draft.assets.map((assetDraft) => {
+          {selectedAssets.length === 0 ? (
+            <div className="empty-strategy-set">Add an asset to set entries.</div>
+          ) : null}
+          {selectedAssets.map((assetDraft) => {
             const assetTotal = getStrategyDraftSpendTotal(assetDraft);
             return (
-              <section className={assetDraft.enabled ? "strategy-asset-block enabled" : "strategy-asset-block"} key={assetDraft.asset}>
-                <label className="asset-toggle">
-                  <input type="checkbox" checked={assetDraft.enabled} onChange={(event) => toggleAsset(assetDraft.asset, event.target.checked)} disabled={pending !== null} />
-                  <span>{strategyInputs[assetDraft.asset].label}</span>
-                  <strong>{formatUsd(assetTotal)}</strong>
-                </label>
-                {assetDraft.enabled ? (
-                  <div className="ladder-editor">
-                    {assetDraft.ladder.map((row, index) => (
-                      <div className="ladder-editor-row" key={`${assetDraft.asset}-${index}`} aria-label={`Entry ${index + 1}`}>
-                        <label>
-                          <span>Entry price</span>
-                          <input className="text-input" value={row.entryPrice} onChange={(event) => updateRow(assetDraft.asset, index, "entryPrice", event.target.value)} inputMode="decimal" />
-                        </label>
-                        <label>
-                          <span>Max spend</span>
-                          <input className="text-input" value={row.maxSpend} onChange={(event) => updateRow(assetDraft.asset, index, "maxSpend", event.target.value)} inputMode="decimal" />
-                        </label>
-                      </div>
-                    ))}
+              <section className="strategy-asset-row" key={assetDraft.asset}>
+                <div className="strategy-asset-header">
+                  <div className="strategy-asset-meta">
+                    <strong>{strategyInputs[assetDraft.asset].label}</strong>
+                    <span>{formatUsd(assetTotal)}</span>
                   </div>
-                ) : null}
+                  <button type="button" className="icon-action asset-remove" onClick={() => removeAsset(assetDraft.asset)} aria-label={`Remove ${strategyInputs[assetDraft.asset].label}`} disabled={pending !== null}>
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+                <div className="entry-list">
+                  {assetDraft.ladder.map((row, index) => (
+                    <div className="entry-row" key={`${assetDraft.asset}-${index}`}>
+                      <span>Entry {index + 1}</span>
+                      <input
+                        className="text-input"
+                        value={row.entryPrice}
+                        onChange={(event) => updateRow(assetDraft.asset, index, "entryPrice", event.target.value)}
+                        inputMode="decimal"
+                        aria-label={`${strategyInputs[assetDraft.asset].label} entry ${index + 1} price`}
+                        placeholder="Entry"
+                      />
+                      <input
+                        className="text-input"
+                        value={row.maxSpend}
+                        onChange={(event) => updateRow(assetDraft.asset, index, "maxSpend", event.target.value)}
+                        inputMode="decimal"
+                        aria-label={`${strategyInputs[assetDraft.asset].label} entry ${index + 1} max spend`}
+                        placeholder="Spend"
+                      />
+                    </div>
+                  ))}
+                </div>
               </section>
             );
           })}
