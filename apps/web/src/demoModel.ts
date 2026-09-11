@@ -7,6 +7,14 @@ export type StrategyDraft = {
   ladder: StrategyLadderRow[];
 };
 
+export type StrategySetAssetDraft = StrategyDraft & {
+  enabled: boolean;
+};
+
+export type StrategySetDraft = {
+  assets: StrategySetAssetDraft[];
+};
+
 export type StrategyLadderRow = {
   entryPrice: string;
   maxSpend: string;
@@ -65,14 +73,16 @@ export const initialDemo: DemoState = {
   ]
 };
 
-export function summarizeReserve(state: DemoState) {
+export function summarizeReserve(state: DemoState, exposureBalance = state.reserve.totalBudget) {
   const totalLegCaps = state.legs.reduce((sum, leg) => sum + leg.maxSpend, 0);
+  const exposure = exposureBalance > 0 ? totalLegCaps / exposureBalance : Infinity;
   return {
     totalBudget: state.reserve.totalBudget,
     spent: state.reserve.spent,
     remaining: state.reserve.totalBudget - state.reserve.spent,
     totalLegCaps,
-    overcommitment: totalLegCaps / state.reserve.totalBudget
+    exposure,
+    overcommitment: exposure
   };
 }
 
@@ -119,6 +129,39 @@ export function getStrategyDraftDefaults(asset: LegKey): StrategyDraft {
     asset,
     ladder: config.ladder.map((row) => ({ ...row }))
   };
+}
+
+export function getStrategyDraftSpendTotal(draft: StrategyDraft): number {
+  return draft.ladder.reduce((sum, row) => {
+    const maxSpend = Number(row.maxSpend);
+    return Number.isFinite(maxSpend) ? sum + maxSpend : sum;
+  }, 0);
+}
+
+export function getStrategySetDraftDefaults(activeAssets: LegKey[]): StrategySetDraft {
+  return {
+    assets: assetCatalog.map((asset) => {
+      const enabled = activeAssets.includes(asset.key);
+      const draft = getStrategyDraftDefaults(asset.key);
+      return {
+        ...draft,
+        ladder: enabled ? draft.ladder : draft.ladder.map((row) => ({ ...row, maxSpend: "" })),
+        enabled
+      };
+    })
+  };
+}
+
+export function getStrategySetExposure(draft: StrategySetDraft, reserveBalance: number) {
+  const virtualCap = draft.assets.reduce((sum, assetDraft) => assetDraft.enabled ? sum + getStrategyDraftSpendTotal(assetDraft) : sum, 0);
+  return {
+    virtualCap,
+    ratio: reserveBalance > 0 ? virtualCap / reserveBalance : Infinity
+  };
+}
+
+export function isStrategySetOvercommitted(draft: StrategySetDraft, reserveBalance: number) {
+  return getStrategySetExposure(draft, reserveBalance).ratio > 1.5;
 }
 
 export function getFillAmountDefault(asset: LegKey): string {

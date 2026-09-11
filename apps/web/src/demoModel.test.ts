@@ -1,13 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { applyFill, getStrategyDraftDefaults, initialDemo, selectLadderRow, summarizeReserve } from "./demoModel";
+import {
+  applyFill,
+  getStrategyDraftDefaults,
+  getStrategyDraftSpendTotal,
+  getStrategySetDraftDefaults,
+  getStrategySetExposure,
+  initialDemo,
+  isStrategySetOvercommitted,
+  selectLadderRow,
+  summarizeReserve
+} from "./demoModel";
 
 describe("demo model", () => {
   it("shows the initial overcommitted reserve", () => {
-    const summary = summarizeReserve(initialDemo);
+    const summary = summarizeReserve(initialDemo, 30000);
 
     expect(summary.totalBudget).toBe(10000);
     expect(summary.totalLegCaps).toBe(35700);
     expect(summary.remaining).toBe(10000);
+    expect(summary.exposure).toBe(1.19);
+  });
+
+  it("measures reserve exposure against available mUSDC balance", () => {
+    const summary = summarizeReserve({
+      reserve: { totalBudget: 10000, spent: 0 },
+      legs: [
+        { ...initialDemo.legs[0], maxSpend: 10000 },
+        { ...initialDemo.legs[1], maxSpend: 10000 }
+      ],
+      eventLog: []
+    }, 30000);
+
+    expect(summary.remaining).toBe(10000);
+    expect(summary.totalLegCaps).toBe(20000);
+    expect(summary.exposure).toBeCloseTo(0.67, 2);
   });
 
   it("seeds a customizable seven asset catalog for the UI", () => {
@@ -40,5 +66,47 @@ describe("demo model", () => {
         { entryPrice: "162", maxSpend: "1100" }
       ]
     });
+  });
+
+  it("sums the draft max spend across all strategy tiers", () => {
+    expect(getStrategyDraftSpendTotal({
+      asset: "eth",
+      ladder: [
+        { entryPrice: "1800", maxSpend: "2000" },
+        { entryPrice: "1600", maxSpend: "2500.50" },
+        { entryPrice: "1400", maxSpend: "" }
+      ]
+    })).toBe(4500.5);
+  });
+
+  it("builds a strategy set draft from active assets", () => {
+    const draft = getStrategySetDraftDefaults(["eth", "wbtc"]);
+
+    expect(draft.assets.find((asset) => asset.asset === "eth")?.enabled).toBe(true);
+    expect(draft.assets.find((asset) => asset.asset === "wbtc")?.enabled).toBe(true);
+    expect(draft.assets.find((asset) => asset.asset === "link")?.enabled).toBe(false);
+  });
+
+  it("keeps active spend values but clears inactive asset spend defaults", () => {
+    const draft = getStrategySetDraftDefaults(["eth"]);
+
+    expect(draft.assets.find((asset) => asset.asset === "eth")?.ladder.map((row) => row.maxSpend)).toEqual(["2000", "4000", "4000"]);
+    expect(draft.assets.find((asset) => asset.asset === "wbtc")?.ladder.map((row) => row.maxSpend)).toEqual(["", "", ""]);
+  });
+
+  it("sums only enabled assets in the strategy set exposure", () => {
+    const draft = getStrategySetDraftDefaults(["eth", "link"]);
+    const exposure = getStrategySetExposure(draft, 10000);
+
+    expect(exposure.virtualCap).toBe(14000);
+    expect(exposure.ratio).toBe(1.4);
+  });
+
+  it("flags strategy sets above 1.5x virtual exposure", () => {
+    const belowLimit = getStrategySetDraftDefaults(["eth", "link"]);
+    const aboveLimit = getStrategySetDraftDefaults(["eth", "wbtc"]);
+
+    expect(isStrategySetOvercommitted(belowLimit, 10000)).toBe(false);
+    expect(isStrategySetOvercommitted(aboveLimit, 10000)).toBe(true);
   });
 });

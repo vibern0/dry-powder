@@ -798,10 +798,12 @@ h1 {
 }
 
 .strategy-modal {
-  width: min(620px, 100%);
+  width: min(760px, 100%);
+  max-height: min(860px, calc(100vh - 36px));
+  overflow: auto;
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  gap: 10px;
+  padding: 14px;
   border: 1px solid #30333c;
   border-radius: 8px;
   background: #111216;
@@ -810,30 +812,106 @@ h1 {
 
 .ladder-editor {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
-.ladder-editor-row {
+.strategy-summary-strip {
   display: grid;
-  grid-template-columns: 68px minmax(0, 1fr) minmax(0, 1fr);
-  align-items: end;
-  gap: 10px;
-  padding: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.strategy-summary-strip div {
+  min-width: 0;
+  padding: 9px 10px;
   border: 1px solid #262933;
   border-radius: 8px;
   background: #0e0f13;
 }
 
-.ladder-editor-row > span {
-  padding-bottom: 10px;
+.strategy-summary-strip span {
+  display: block;
+  color: #8f93a1;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.strategy-summary-strip strong {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+}
+
+.strategy-warning {
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 184, 77, 0.42);
+  border-radius: 8px;
+  background: rgba(255, 184, 77, 0.12);
+  color: #ffd58a;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.strategy-set-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.strategy-asset-block {
+  padding: 9px;
+  border: 1px solid #262933;
+  border-radius: 8px;
+  background: #0d0e12;
+}
+
+.strategy-asset-block.enabled {
+  border-color: #3a3f4c;
+  background: #101116;
+}
+
+.asset-toggle {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: #6cf6b1;
+}
+
+.asset-toggle span {
+  color: #f2f4fb;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.asset-toggle strong {
   color: #d7d9e4;
   font-size: 13px;
-  font-weight: 800;
+}
+
+.strategy-asset-block .ladder-editor {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.ladder-editor-row {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid #262933;
+  border-radius: 8px;
+  background: #0e0f13;
 }
 
 .ladder-editor-row label {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .modal-header {
@@ -851,7 +929,7 @@ h1 {
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   margin-top: 4px;
 }
 
@@ -1081,6 +1159,16 @@ h1 {
   }
 
   .fill-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-summary-strip,
+  .asset-toggle,
+  .ladder-editor-row {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-asset-block .ladder-editor {
     grid-template-columns: 1fr;
   }
 

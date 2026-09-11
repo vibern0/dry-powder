@@ -1,16 +1,19 @@
-import { ArrowRight, Check, Coins, Droplets, Gauge, Plus, RotateCcw, Settings, Trash2, X } from "lucide-react";
+import { ArrowRight, Check, Coins, Droplets, Gauge, RotateCcw, Settings, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   formatUsd,
   getFillAmountDefault,
-  getStrategyDraftDefaults,
+  getStrategyDraftSpendTotal,
+  getStrategySetDraftDefaults,
+  getStrategySetExposure,
   initialDemo,
+  isStrategySetOvercommitted,
   selectLadderRow,
   summarizeReserve,
   type DemoState,
   type Leg,
   type LegKey,
-  type StrategyDraft
+  type StrategySetDraft
 } from "./demoModel";
 import {
   addStrategy,
@@ -33,7 +36,7 @@ import {
   type TransactionUpdate,
   type WalletState
 } from "./onchain/client";
-import { SEPOLIA_CHAIN_ID } from "./onchain/constants";
+import { SEPOLIA_CHAIN_ID, TOKENS } from "./onchain/constants";
 import { roleForAccount, strategyInputs, strategyKeys } from "./onchain/strategy";
 
 type DemoPage = "maker" | "taker" | "setup";
@@ -63,18 +66,21 @@ export function App() {
   const [page, setPage] = useState<DemoPage>("maker");
   const [activeLegKeys, setActiveLegKeys] = useState<LegKey[]>([]);
   const [strategyModalOpen, setStrategyModalOpen] = useState(false);
-  const [strategyDraft, setStrategyDraft] = useState<StrategyDraft>(() => getStrategyDraftDefaults(firstStrategyKey));
+  const [strategyDraft, setStrategyDraft] = useState<StrategySetDraft>(() => getStrategySetDraftDefaults([]));
   const [fillAsset, setFillAsset] = useState<LegKey>(firstStrategyKey);
   const [fillAmount, setFillAmount] = useState("4000");
+  const [makerReserveBalance, setMakerReserveBalance] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const reserveCreated = Boolean(completed.createReserve);
   const strategiesActive = activeLegKeys.length > 0;
   const visibleState = strategiesActive ? { ...state, legs: state.legs.filter((leg) => activeLegKeys.includes(leg.key)) } : { ...state, legs: [] };
-  const summary = useMemo(() => summarizeReserve(visibleState), [visibleState]);
+  const summary = useMemo(
+    () => summarizeReserve(visibleState, makerReserveBalance ?? visibleState.reserve.totalBudget),
+    [makerReserveBalance, visibleState]
+  );
   const wrongNetwork = wallet && wallet.chainId !== SEPOLIA_CHAIN_ID;
   const role = wallet ? roleForAccount(wallet.account, makerSession?.maker ?? null) : "maker";
   const reserveId = makerSession?.reserveId;
-  const availableStrategyKeys = strategyKeys.filter((key) => !activeLegKeys.includes(key));
   const fillableStrategyKeys = activeLegKeys.length ? activeLegKeys : strategyKeys;
 
   async function connect() {
@@ -112,6 +118,7 @@ export function App() {
     const next = createFreshMakerSession(wallet.account);
     setMakerSession(next);
     setState(initialDemo);
+    setMakerReserveBalance(null);
     setCompleted({});
     setQuotes(null);
     setActiveLegKeys([]);
@@ -123,6 +130,7 @@ export function App() {
     const session = useConnectedAccountAsMaker(wallet.account);
     setMakerSession(session);
     setState(initialDemo);
+    setMakerReserveBalance(null);
     setCompleted({});
     setQuotes(null);
     setActiveLegKeys([]);
@@ -139,8 +147,8 @@ export function App() {
   async function loadSnapshot(target: MakerSession) {
     const snapshot = await readOnchainSnapshot(target.maker, target.reserveId);
     setState(applySnapshot(snapshot.reserve, snapshot.legs));
+    setMakerReserveBalance(formatTokenAmount(snapshot.balances[TOKENS.mUSDC]));
     const nextActiveLegKeys = strategyKeys.filter((key) => snapshot.legs[key].exists && snapshot.shipped[key]);
-    const nextAvailableLegKeys = strategyKeys.filter((key) => !nextActiveLegKeys.includes(key));
     setActiveLegKeys(nextActiveLegKeys);
     setFillAsset((current) => {
       if (nextActiveLegKeys.includes(current) || nextActiveLegKeys.length === 0) return current;
@@ -148,7 +156,6 @@ export function App() {
       setFillAmount(getFillAmountDefault(nextAsset));
       return nextAsset;
     });
-    setStrategyDraft((current) => nextActiveLegKeys.includes(current.asset) ? getStrategyDraftDefaults(nextAvailableLegKeys[0] ?? current.asset) : current);
     setCompleted((previous) => ({
       ...previous,
       createReserve: snapshot.reserve.exists,
@@ -190,14 +197,14 @@ export function App() {
   }
 
   function openStrategyModal() {
-    const asset = availableStrategyKeys.includes(strategyDraft.asset) ? strategyDraft.asset : availableStrategyKeys[0];
-    if (!asset) return;
-    setStrategyDraft(getStrategyDraftDefaults(asset));
+    setStrategyDraft((current) => ({
+      assets: getStrategySetDraftDefaults(activeLegKeys).assets.map((defaultDraft) => {
+        const currentDraft = current.assets.find((assetDraft) => assetDraft.asset === defaultDraft.asset);
+        const hasCurrentSpend = currentDraft?.ladder.some((row) => row.maxSpend) ?? false;
+        return activeLegKeys.includes(defaultDraft.asset) && currentDraft && hasCurrentSpend ? { ...currentDraft, enabled: true } : defaultDraft;
+      })
+    }));
     setStrategyModalOpen(true);
-  }
-
-  function updateStrategyDraftAsset(asset: LegKey) {
-    setStrategyDraft(getStrategyDraftDefaults(asset));
   }
 
   function updateFillAsset(asset: LegKey) {
@@ -205,33 +212,30 @@ export function App() {
     setFillAmount(getFillAmountDefault(asset));
   }
 
-  async function addSelectedStrategy(draft: StrategyDraft) {
+  async function setSelectedStrategy(draft: StrategySetDraft) {
     if (!wallet || !makerSession || !isMakerRole) return;
     await run("addStrategy", async () => {
-      await addStrategy(wallet.account, makerSession.reserveId, draft.asset, pushEvent, {
-        ladder: draft.ladder
-      });
-      setFillAsset(draft.asset);
-      setFillAmount(getFillAmountDefault(draft.asset));
-      setStrategyModalOpen(false);
-      await loadSnapshot(makerSession);
-    });
-  }
-
-  async function updateSelectedStrategy(key: LegKey) {
-    if (!wallet || !makerSession || !isMakerRole) return;
-    await run("editStrategy", async () => {
-      await editStrategy(wallet.account, makerSession.reserveId, key, strategyInputs[key].ladder, pushEvent);
-      await loadSnapshot(makerSession);
-    });
-  }
-
-  async function deleteSelectedStrategy(key: LegKey) {
-    if (!wallet || !makerSession || !isMakerRole) return;
-    await run("removeStrategy", async () => {
-      await removeStrategy(wallet.account, makerSession.reserveId, key, pushEvent);
+      const enabledKeys = draft.assets.filter((asset) => asset.enabled).map((asset) => asset.asset);
+      const activeKeySet = new Set(activeLegKeys);
+      for (const key of activeLegKeys) {
+        if (!enabledKeys.includes(key)) await removeStrategy(wallet.account, makerSession.reserveId, key, pushEvent);
+      }
+      for (const assetDraft of draft.assets) {
+        if (!assetDraft.enabled) continue;
+        if (activeKeySet.has(assetDraft.asset)) {
+          await editStrategy(wallet.account, makerSession.reserveId, assetDraft.asset, assetDraft.ladder, pushEvent);
+        } else {
+          await addStrategy(wallet.account, makerSession.reserveId, assetDraft.asset, pushEvent, {
+            ladder: assetDraft.ladder
+          });
+        }
+      }
+      const nextFillAsset = enabledKeys[0] ?? firstStrategyKey;
+      setFillAsset(nextFillAsset);
+      setFillAmount(getFillAmountDefault(nextFillAsset));
       setQuotes(null);
       setCompleted((previous) => ({ ...previous, fill: false }));
+      setStrategyModalOpen(false);
       await loadSnapshot(makerSession);
     });
   }
@@ -276,8 +280,8 @@ export function App() {
           </div>
           <h1>Shared capital, coordinated across strategies.</h1>
           <p>
-            A maker advertises more virtual liquidity than they own, while one Dry Powder reserve decides which
-            opportunity deserves scarce mUSDC next.
+            Dry Powder keeps mUSDC flexible, deploying shared reserves to the best opportunity instead of leaving
+            capital fragmented across idle quotes.
           </p>
 
           {error ? <div className="error-banner">{error}</div> : null}
@@ -341,9 +345,9 @@ export function App() {
           <PanelTitle icon={<Coins size={18} />} title={page === "maker" ? "Maker Strategies" : "Taker Fills"} />
           <div className="strategy-actions">
             {page === "maker" ? (
-              <button className="secondary-action" onClick={openStrategyModal} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || pending !== null || availableStrategyKeys.length === 0}>
-                <Plus size={15} />
-                {pending === "addStrategy" ? "Adding..." : "Add strategy"}
+              <button className="secondary-action" onClick={openStrategyModal} disabled={!wallet || Boolean(wrongNetwork) || !isMakerRole || pending !== null}>
+                <Settings size={15} />
+                {pending === "addStrategy" ? "Setting..." : "Set strategy"}
               </button>
             ) : null}
             <button className="secondary-action" onClick={refresh} disabled={!wallet || Boolean(wrongNetwork) || pending !== null}>
@@ -380,10 +384,6 @@ export function App() {
                   leg={leg}
                   quote={quotes?.[leg.key]}
                   active={leg.key === fillAsset && Boolean(completed.fill)}
-                  editable={page === "maker"}
-                  pending={pending}
-                  onEdit={() => updateSelectedStrategy(leg.key)}
-                  onDelete={() => deleteSelectedStrategy(leg.key)}
                 />
               ))}
             </div>
@@ -401,12 +401,11 @@ export function App() {
       {strategyModalOpen ? (
         <StrategyModal
           draft={strategyDraft}
-          availableStrategyKeys={availableStrategyKeys}
+          makerReserveBalance={makerReserveBalance ?? summary.totalBudget}
           pending={pending}
-          onAssetChange={updateStrategyDraftAsset}
           onChange={setStrategyDraft}
           onClose={() => setStrategyModalOpen(false)}
-          onSubmit={addSelectedStrategy}
+          onSubmit={setSelectedStrategy}
         />
       ) : null}
     </main>
@@ -546,27 +545,38 @@ function ActivityPanel({ eventLog }: { eventLog: TransactionUpdate[] }) {
 
 function StrategyModal({
   draft,
-  availableStrategyKeys,
+  makerReserveBalance,
   pending,
-  onAssetChange,
   onChange,
   onClose,
   onSubmit
 }: {
-  draft: StrategyDraft;
-  availableStrategyKeys: LegKey[];
+  draft: StrategySetDraft;
+  makerReserveBalance: number;
   pending: StepKey | "connect" | "switch" | "refresh" | null;
-  onAssetChange: (asset: LegKey) => void;
-  onChange: (draft: StrategyDraft) => void;
+  onChange: (draft: StrategySetDraft) => void;
   onClose: () => void;
-  onSubmit: (draft: StrategyDraft) => void;
+  onSubmit: (draft: StrategySetDraft) => void;
 }) {
-  const disabled = pending !== null || draft.ladder.some((row) => !row.entryPrice || !row.maxSpend);
+  const exposure = getStrategySetExposure(draft, makerReserveBalance);
+  const overcommitted = isStrategySetOvercommitted(draft, makerReserveBalance);
+  const incomplete = draft.assets.some((asset) => asset.enabled && asset.ladder.some((row) => !row.entryPrice || !row.maxSpend));
+  const disabled = pending !== null || incomplete || overcommitted;
 
-  function updateRow(index: number, field: "entryPrice" | "maxSpend", value: string) {
+  function toggleAsset(asset: LegKey, enabled: boolean) {
     onChange({
       ...draft,
-      ladder: draft.ladder.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row)
+      assets: draft.assets.map((assetDraft) => assetDraft.asset === asset ? { ...assetDraft, enabled } : assetDraft)
+    });
+  }
+
+  function updateRow(asset: LegKey, index: number, field: "entryPrice" | "maxSpend", value: string) {
+    onChange({
+      ...draft,
+      assets: draft.assets.map((assetDraft) => assetDraft.asset === asset ? {
+        ...assetDraft,
+        ladder: assetDraft.ladder.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row)
+      } : assetDraft)
     });
   }
 
@@ -581,39 +591,65 @@ function StrategyModal({
       >
         <div className="modal-header">
           <div>
-            <span>Add strategy</span>
-            <h2>{strategyInputs[draft.asset].label}</h2>
+            <span>Strategy</span>
+            <h2>Set strategy</h2>
           </div>
           <button type="button" className="icon-action" onClick={onClose} aria-label="Close strategy form" disabled={pending !== null}>
             <X size={18} />
           </button>
         </div>
-        <label className="modal-field">
-          <span>Asset</span>
-          <select className="select-input" value={draft.asset} onChange={(event) => onAssetChange(event.target.value as LegKey)} disabled={pending !== null}>
-            {availableStrategyKeys.map((key) => (
-              <option value={key} key={key}>{strategyInputs[key].label}</option>
-            ))}
-          </select>
-        </label>
-        <div className="ladder-editor">
-          {draft.ladder.map((row, index) => (
-            <div className="ladder-editor-row" key={index}>
-              <span>Level {index + 1}</span>
-              <label>
-                <span>Entry price</span>
-                <input className="text-input" value={row.entryPrice} onChange={(event) => updateRow(index, "entryPrice", event.target.value)} inputMode="decimal" />
-              </label>
-              <label>
-                <span>Max spend</span>
-                <input className="text-input" value={row.maxSpend} onChange={(event) => updateRow(index, "maxSpend", event.target.value)} inputMode="decimal" />
-              </label>
-            </div>
-          ))}
+        <div className="strategy-summary-strip" aria-label="Strategy funding summary">
+          <div>
+            <span>mUSDC balance</span>
+            <strong>{formatUsd(makerReserveBalance)}</strong>
+          </div>
+          <div>
+            <span>Virtual cap</span>
+            <strong>{formatUsd(exposure.virtualCap)}</strong>
+          </div>
+          <div>
+            <span>Exposure</span>
+            <strong>{Number.isFinite(exposure.ratio) ? `${exposure.ratio.toFixed(2)}x` : "--"}</strong>
+          </div>
+        </div>
+        {overcommitted ? (
+          <div className="strategy-warning">
+            Virtual exposure is above 1.5x mUSDC balance. Set strategy is disabled to avoid excessive reverting fills.
+          </div>
+        ) : null}
+        <div className="strategy-set-editor">
+          {draft.assets.map((assetDraft) => {
+            const assetTotal = getStrategyDraftSpendTotal(assetDraft);
+            return (
+              <section className={assetDraft.enabled ? "strategy-asset-block enabled" : "strategy-asset-block"} key={assetDraft.asset}>
+                <label className="asset-toggle">
+                  <input type="checkbox" checked={assetDraft.enabled} onChange={(event) => toggleAsset(assetDraft.asset, event.target.checked)} disabled={pending !== null} />
+                  <span>{strategyInputs[assetDraft.asset].label}</span>
+                  <strong>{formatUsd(assetTotal)}</strong>
+                </label>
+                {assetDraft.enabled ? (
+                  <div className="ladder-editor">
+                    {assetDraft.ladder.map((row, index) => (
+                      <div className="ladder-editor-row" key={`${assetDraft.asset}-${index}`} aria-label={`Entry ${index + 1}`}>
+                        <label>
+                          <span>Entry price</span>
+                          <input className="text-input" value={row.entryPrice} onChange={(event) => updateRow(assetDraft.asset, index, "entryPrice", event.target.value)} inputMode="decimal" />
+                        </label>
+                        <label>
+                          <span>Max spend</span>
+                          <input className="text-input" value={row.maxSpend} onChange={(event) => updateRow(assetDraft.asset, index, "maxSpend", event.target.value)} inputMode="decimal" />
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })}
         </div>
         <div className="modal-actions">
           <button type="button" className="secondary-action" onClick={onClose} disabled={pending !== null}>Cancel</button>
-          <button type="submit" className="primary-action" disabled={disabled}>{pending === "addStrategy" ? "Adding..." : "Add strategy"}</button>
+          <button type="submit" className="primary-action" disabled={disabled}>{pending === "addStrategy" ? "Setting..." : "Set strategy"}</button>
         </div>
       </form>
     </div>
@@ -643,7 +679,7 @@ function ReserveCard({ summary, active }: { summary: ReturnType<typeof summarize
             <strong>--</strong>
           </div>
           <div>
-            <span>Overcommit</span>
+            <span>Exposure</span>
             <strong>--</strong>
           </div>
         </div>
@@ -679,8 +715,8 @@ function ReserveCard({ summary, active }: { summary: ReturnType<typeof summarize
           <strong>{formatUsd(summary.totalLegCaps)}</strong>
         </div>
         <div>
-          <span>Overcommit</span>
-          <strong>{summary.overcommitment.toFixed(1)}x</strong>
+          <span>Exposure</span>
+          <strong>{Number.isFinite(summary.exposure) ? `${summary.exposure.toFixed(2)}x` : "--"}</strong>
         </div>
       </div>
       <div className="remaining-band" style={{ width: `${remainingPercent}%` }} />
@@ -706,19 +742,11 @@ function isStepDisabled(step: StepKey, completed: Partial<Record<StepKey, boolea
 function LegCard({
   leg,
   quote,
-  active,
-  editable,
-  pending,
-  onEdit,
-  onDelete
+  active
 }: {
   leg: Leg;
   quote?: string;
   active: boolean;
-  editable: boolean;
-  pending: StepKey | "connect" | "switch" | "refresh" | null;
-  onEdit: () => void;
-  onDelete: () => void;
 }) {
   const utilization = (leg.spent / leg.maxSpend) * 100;
   const changed = leg.currentMaxPrice !== leg.baseMaxPrice;
@@ -755,20 +783,12 @@ function LegCard({
         <span>{formatUsd(leg.spent)} spent</span>
         <strong>{formatUsd(leg.maxSpend)} cap</strong>
       </div>
-      {editable ? (
-        <div className="card-actions">
-          <button className="mini-action" onClick={onEdit} disabled={pending !== null}>Reset</button>
-          <button className="mini-action danger" onClick={onDelete} disabled={pending !== null}>
-            <Trash2 size={14} />
-          </button>
-        </div>
-      ) : null}
     </article>
   );
 }
 
 function formatTokenAmount(value: bigint) {
-  return (Number(value) / 1_000_000).toString();
+  return Number(value) / 1_000_000;
 }
 
 function shortAddress(address: string) {
