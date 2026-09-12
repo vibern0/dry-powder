@@ -32,6 +32,7 @@ import {
   hasInjectedWallet,
   mintMakerReserveTokens,
   mintTakerAssetTokens,
+  readMockTokenBalance,
   quoteStrategies,
   readOnchainSnapshot,
   reconnectWallet,
@@ -78,6 +79,7 @@ export function App() {
   const [fillAsset, setFillAsset] = useState<LegKey>(firstStrategyKey);
   const [fillAmount, setFillAmount] = useState(() => getInitialFillAmount(firstStrategyKey));
   const [makerReserveBalance, setMakerReserveBalance] = useState<number | null>(null);
+  const [takerMusdcBalance, setTakerMusdcBalance] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const reserveCreated = Boolean(completed.createReserve);
   const strategiesActive = activeLegKeys.length > 0;
@@ -124,7 +126,7 @@ export function App() {
       const session = makerSession ?? getOrCreateMakerSession(next.account);
       setWallet(next);
       setMakerSession(session);
-      if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(session);
+      if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(session, next.account);
       setEventLog([{ step: "quote", message: `Wallet connected as ${roleForAccount(next.account, session.maker)}: ${shortAddress(next.account)}` }]);
     });
   }
@@ -133,6 +135,7 @@ export function App() {
     forgetWalletConnection();
     setWallet(null);
     setQuotes(null);
+    setTakerMusdcBalance(null);
     setError(null);
     setPending(null);
     setEventLog([{ step: "quote", message: "Wallet disconnected locally. Maker session preserved." }]);
@@ -145,7 +148,7 @@ export function App() {
       setWallet(next);
       const session = makerSession ?? getOrCreateMakerSession(next.account);
       setMakerSession(session);
-      if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(session);
+      if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(session, next.account);
     });
   }
 
@@ -155,6 +158,7 @@ export function App() {
     setMakerSession(next);
     setState(initialDemo);
     setMakerReserveBalance(null);
+    setTakerMusdcBalance(null);
     setCompleted({});
     setQuotes(null);
     setActiveLegKeys([]);
@@ -167,6 +171,7 @@ export function App() {
     setMakerSession(session);
     setState(initialDemo);
     setMakerReserveBalance(null);
+    setTakerMusdcBalance(null);
     setCompleted({});
     setQuotes(null);
     setActiveLegKeys([]);
@@ -180,10 +185,14 @@ export function App() {
     });
   }
 
-  async function loadSnapshot(target: MakerSession) {
+  async function loadSnapshot(target: MakerSession, connectedAccount = wallet?.account) {
     const snapshot = await readOnchainSnapshot(target.maker, target.reserveId);
     setState(applySnapshot(snapshot.reserve, snapshot.legs));
     setMakerReserveBalance(formatTokenAmount(snapshot.balances[TOKENS.mUSDC]));
+    if (connectedAccount) {
+      const balance = await readMockTokenBalance(connectedAccount, TOKENS.mUSDC);
+      setTakerMusdcBalance(formatTokenAmount(balance));
+    }
     const nextActiveLegKeys = selectActiveStrategyKeys(strategyKeys, snapshot.legs, snapshot.shipped);
     setActiveLegKeys(nextActiveLegKeys);
     setFillAsset((current) => {
@@ -335,7 +344,12 @@ export function App() {
           {error ? <div className="error-banner">{error}</div> : null}
         </div>
 
-        <ReserveCard summary={summary} active={Boolean(makerSession) && reserveCreated} />
+        <HeroSummary
+          page={page}
+          summary={summary}
+          reserveActive={Boolean(makerSession) && reserveCreated}
+          takerMusdcBalance={takerMusdcBalance}
+        />
       </section>
 
       {page === "setup" ? (
@@ -726,6 +740,49 @@ function StrategyModal({
           <button type="submit" className="primary-action" disabled={disabled}>{pending === "addStrategy" ? "Setting..." : "Set strategy"}</button>
         </div>
       </form>
+    </div>
+  );
+}
+
+export function HeroSummary({
+  page,
+  summary,
+  reserveActive,
+  takerMusdcBalance
+}: {
+  page: DemoPage;
+  summary: ReturnType<typeof summarizeReserve>;
+  reserveActive: boolean;
+  takerMusdcBalance: number | null;
+}) {
+  if (page === "taker") {
+    return <TakerBalanceCard balance={takerMusdcBalance} />;
+  }
+
+  return <ReserveCard summary={summary} active={reserveActive} />;
+}
+
+function TakerBalanceCard({ balance }: { balance: number | null }) {
+  return (
+    <div className="reserve-card taker-balance-card">
+      <div className="reserve-header">
+        <span>mUSDC balance</span>
+        <strong>{balance === null ? "Not loaded" : "Live"}</strong>
+      </div>
+      <div className="reserve-main">
+        <span>{balance === null ? "--" : formatUsd(balance)}</span>
+        <small>available to the connected taker</small>
+      </div>
+      <div className="reserve-stats">
+        <div>
+          <span>Fill token</span>
+          <strong>mUSDC</strong>
+        </div>
+        <div>
+          <span>Source</span>
+          <strong>Connected wallet</strong>
+        </div>
+      </div>
     </div>
   );
 }

@@ -5,7 +5,7 @@ type WalletRestoreDependencies = {
   reconnectWallet: () => Promise<WalletState | null>;
   forgetWalletConnection: () => void;
   getOrCreateMakerSession: (account: WalletState["account"]) => MakerSession;
-  loadSnapshot: (session: MakerSession) => Promise<void>;
+  loadSnapshot: (session: MakerSession, account?: WalletState["account"]) => Promise<void>;
   onWalletRestored: (wallet: WalletState, session: MakerSession) => void;
   onSnapshotError?: (error: unknown) => void;
 };
@@ -34,7 +34,7 @@ export async function restoreWalletSession({
   if (wallet.chainId !== SEPOLIA_CHAIN_ID) return;
 
   try {
-    await loadSnapshot(session);
+    await loadSnapshot(session, wallet.account);
   } catch (error) {
     onSnapshotError?.(error);
   }

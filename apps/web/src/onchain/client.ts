@@ -425,6 +425,16 @@ export async function readOnchainSnapshot(account: Address, reserveId: Hex) {
   };
 }
 
+export async function readMockTokenBalance(account: Address, token: Address) {
+  const { publicClient } = makeClients(account);
+  return publicClient.readContract({
+    address: token,
+    abi: MOCK_ERC20_ABI,
+    functionName: "balanceOf",
+    args: [account]
+  });
+}
+
 async function readReserve(account: Address, reserveId: Hex) {
   const { publicClient } = makeClients(account);
   return publicClient.readContract({
