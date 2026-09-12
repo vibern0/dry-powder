@@ -284,6 +284,54 @@ DONE         Implemented, tested, and documented enough for the next phase.
 
 ---
 
+## Future TODO: Partial and Multi-Tier Fills
+
+**Status:** `TODO`
+
+**Purpose:** Make maker and taker strategy views show live remaining capacity per asset ladder row, and support taker fills that can consume less than, exactly, or more than one row's remaining amount.
+
+**Tasks:**
+
+- [ ] Update maker and taker strategy cards so each asset row displays the remaining amount after partial fills. For example, if WBTC has `$5,000` available at `$60,000` and a taker buys only `$300`, both views should show `$4,700` remaining at `$60,000`.
+- [ ] Treat taker fill amount as an arbitrary requested spend instead of assuming it consumes 100% of the currently quoted row.
+- [ ] Support multi-row execution when a taker requests more than the current row can fill. For example, if a taker requests `$8,000`, and WBTC has `$4,700` remaining at `$60,000`, fill `$4,700` at `$60,000` and continue filling the remainder from lower-price rows until the request is filled or the ladder/reserve capacity is exhausted.
+- [ ] Define the exact quote and swap semantics for blended fills across multiple prices, including maker-favorable rounding and what happens when the remaining reserve or maker wallet balance cannot satisfy the full taker request.
+- [ ] Add tests for partial row depletion, exact row depletion, multi-row fills, and insufficient remaining ladder capacity.
+
+**Done Means:**
+
+- [ ] Every asset ladder row shows the correct remaining amount after each fill in both maker and taker views.
+- [ ] Takers can request arbitrary fill amounts without relying on fixed demo amounts.
+- [ ] Multi-row fills consume rows in order and record the exact reserve amount spent per row.
+
+---
+
+## Future TODO: Taker Swap UX
+
+**Status:** `TODO`
+
+**Purpose:** Make the taker page feel like a normal swap interface instead of a demo-only fill button, while preserving Dry Powder's strategy quote behavior underneath. In the launched product, thousands of makers can publish strategies saying which assets they want to buy and at what ladder prices. Takers only sell assets into those maker strategies; the UI should not expose a separate "buy" mode because the maker is the buyer.
+
+**Tasks:**
+
+- [ ] Replace the taker "fill" interaction with a regular swap-style flow where the taker selects the asset they are selling into the maker strategy.
+- [ ] Keep the taker action framed as selling the selected asset for mUSDC, never as buying the maker's target asset.
+- [ ] Show the taker's balance for the selected asset before they enter or submit a swap amount.
+- [ ] When the taker enters a sell amount, estimate the amount of mUSDC they will receive from the selected strategy.
+- [ ] Recalculate the estimated receive amount when the selected asset, sell amount, ladder state, reserve capacity, or maker wallet balance changes.
+- [ ] Connect this estimate to the partial and multi-tier fill behavior above, so a sell amount can quote across the current row and lower-price rows when needed.
+- [ ] Make insufficient balance and insufficient strategy capacity visible before submission.
+- [ ] Add a product-level test scenario with many maker strategies available and a taker selecting one asset to sell, confirming the UI shows only `sell asset -> receive mUSDC` and routes to the correct maker strategy quote.
+
+**Done Means:**
+
+- [ ] The taker page presents `sell asset amount -> estimated mUSDC received` like a standard swap.
+- [ ] The selected asset balance is visible and accurate for the connected taker wallet.
+- [ ] The quoted receive amount matches the actual swap path, including partial rows and multi-row fills.
+- [ ] Tests prove takers cannot switch into a buy-side flow; all taker actions sell assets into maker buy strategies.
+
+---
+
 ## Global Done Criteria
 
 - [ ] Official Aqua/SwapVM contracts are used directly.
