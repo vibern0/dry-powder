@@ -739,6 +739,92 @@ h1 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.strategy-skeleton-card {
+  display: grid;
+  gap: 13px;
+  min-height: 282px;
+  padding: 22px;
+  border: 1px solid #242731;
+  border-radius: 8px;
+  background: #111216;
+}
+
+.skeleton-top {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.skeleton-avatar,
+.skeleton-line,
+.skeleton-ladder span,
+.skeleton-meter {
+  display: block;
+  overflow: hidden;
+  position: relative;
+  background: #1d2028;
+}
+
+.skeleton-avatar::after,
+.skeleton-line::after,
+.skeleton-ladder span::after,
+.skeleton-meter::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  transform: translateX(-100%);
+  animation: skeleton-sweep 1.25s ease-in-out infinite;
+}
+
+.skeleton-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 999px;
+}
+
+.skeleton-line.title {
+  width: 92px;
+  height: 18px;
+  margin-bottom: 8px;
+}
+
+.skeleton-line.short {
+  width: 128px;
+}
+
+.skeleton-line.label {
+  width: 82px;
+  margin-top: 20px;
+}
+
+.skeleton-line.value {
+  width: 132px;
+  height: 34px;
+}
+
+.skeleton-ladder {
+  display: grid;
+  gap: 8px;
+}
+
+.skeleton-ladder span {
+  height: 34px;
+  border-radius: 8px;
+}
+
+.skeleton-meter {
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 999px;
+}
+
 .strategy-actions {
   display: flex;
   flex-wrap: wrap;
@@ -812,6 +898,12 @@ h1 {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes skeleton-sweep {
+  to {
+    transform: translateX(100%);
   }
 }
 

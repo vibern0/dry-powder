@@ -102,6 +102,7 @@ export function App() {
   const selectedTakerStrategy = takerStrategies.find((strategy) => strategy.id === selectedTakerStrategyId) ?? takerStrategies[0] ?? null;
   const takerStrategiesActive = takerStrategies.length > 0;
   const takerFillPending = isTakerFillPending(pending);
+  const strategyListLoading = isStrategyListLoading(pending);
 
   useEffect(() => {
     if (!hasInjectedWallet()) return;
@@ -543,7 +544,9 @@ export function App() {
               </button>
             </div>
           ) : null}
-          {page === "taker" && takerStrategiesActive ? (
+          {strategyListLoading ? (
+            <StrategyListSkeleton />
+          ) : page === "taker" && takerStrategiesActive ? (
             <div className="leg-grid">
               {takerStrategies.map((strategy) => (
                 <LegCard
@@ -729,6 +732,10 @@ export function isStrategyDraftUnchanged(assetDraft: StrategySetDraft["assets"][
 
 export function isTakerFillPending(pending: StepKey | "connect" | "switch" | "refresh" | null) {
   return pending === "quote" || pending === "fill";
+}
+
+export function isStrategyListLoading(pending: StepKey | "connect" | "switch" | "refresh" | null) {
+  return pending === "refresh";
 }
 
 function ActivityPanel({ eventLog }: { eventLog: TransactionUpdate[] }) {
@@ -1022,6 +1029,32 @@ function EmptyPanel({ title, detail }: { title: string; detail: string }) {
       <Coins size={22} />
       <strong>{title}</strong>
       <span>{detail}</span>
+    </div>
+  );
+}
+
+function StrategyListSkeleton() {
+  return (
+    <div className="leg-grid strategy-skeleton-grid" aria-label="Loading strategies">
+      {[0, 1, 2].map((index) => (
+        <div className="strategy-skeleton-card" key={index}>
+          <div className="skeleton-top">
+            <span className="skeleton-avatar" />
+            <div>
+              <span className="skeleton-line title" />
+              <span className="skeleton-line short" />
+            </div>
+          </div>
+          <span className="skeleton-line label" />
+          <span className="skeleton-line value" />
+          <div className="skeleton-ladder">
+            <span />
+            <span />
+            <span />
+          </div>
+          <span className="skeleton-meter" />
+        </div>
+      ))}
     </div>
   );
 }

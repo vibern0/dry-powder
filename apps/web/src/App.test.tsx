@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { HeroSummary, isStrategyDraftUnchanged, isTakerFillPending, selectMakerSessionForAccount, selectMakerSessionForPage } from "./App";
+import { HeroSummary, isStrategyDraftUnchanged, isStrategyListLoading, isTakerFillPending, selectMakerSessionForAccount, selectMakerSessionForPage } from "./App";
 import { initialDemo, summarizeReserve } from "./demoModel";
 import type { MakerSession } from "./onchain/client";
 
@@ -85,5 +85,14 @@ describe("taker fill loading state", () => {
     expect(isTakerFillPending("fill")).toBe(true);
     expect(isTakerFillPending("refresh")).toBe(false);
     expect(isTakerFillPending(null)).toBe(false);
+  });
+});
+
+describe("strategy list loading state", () => {
+  it("shows list loading only while strategy data is refreshing", () => {
+    expect(isStrategyListLoading("refresh")).toBe(true);
+    expect(isStrategyListLoading("quote")).toBe(false);
+    expect(isStrategyListLoading("fill")).toBe(false);
+    expect(isStrategyListLoading(null)).toBe(false);
   });
 });
