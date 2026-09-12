@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { HeroSummary, isStrategyDraftUnchanged, selectMakerSessionForAccount, selectMakerSessionForPage } from "./App";
+import { HeroSummary, isStrategyDraftUnchanged, isTakerFillPending, selectMakerSessionForAccount, selectMakerSessionForPage } from "./App";
 import { initialDemo, summarizeReserve } from "./demoModel";
 import type { MakerSession } from "./onchain/client";
 
@@ -76,5 +76,14 @@ describe("strategy draft comparison", () => {
         maxSpend: index === 0 ? "1234" : String(row.maxSpend)
       }))
     }, initialDemo.legs)).toBe(false);
+  });
+});
+
+describe("taker fill loading state", () => {
+  it("marks the fill section busy while quotes or fills are running", () => {
+    expect(isTakerFillPending("quote")).toBe(true);
+    expect(isTakerFillPending("fill")).toBe(true);
+    expect(isTakerFillPending("refresh")).toBe(false);
+    expect(isTakerFillPending(null)).toBe(false);
   });
 });

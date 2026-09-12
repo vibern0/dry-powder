@@ -101,6 +101,7 @@ export function App() {
   const fillableStrategyKeys = activeLegKeys.length ? activeLegKeys : strategyKeys;
   const selectedTakerStrategy = takerStrategies.find((strategy) => strategy.id === selectedTakerStrategyId) ?? takerStrategies[0] ?? null;
   const takerStrategiesActive = takerStrategies.length > 0;
+  const takerFillPending = isTakerFillPending(pending);
 
   useEffect(() => {
     if (!hasInjectedWallet()) return;
@@ -517,7 +518,7 @@ export function App() {
             </button>
           </div>
           {page === "taker" ? (
-            <div className="fill-panel">
+            <div className={takerFillPending ? "fill-panel is-loading" : "fill-panel"} aria-busy={takerFillPending}>
               <label>
                 <span>Fill strategy</span>
                 <select className="select-input" value={selectedTakerStrategy?.id ?? ""} onChange={(event) => updateTakerStrategy(event.target.value)} disabled={!takerStrategiesActive}>
@@ -533,9 +534,11 @@ export function App() {
                 <input className="text-input" value={fillAmount} onChange={(event) => setFillAmount(event.target.value)} inputMode="decimal" />
               </label>
               <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !takerStrategiesActive || pending !== null}>
+                {pending === "quote" ? <span className="button-spinner" aria-hidden="true" /> : null}
                 {pending === "quote" ? "Quoting..." : "Refresh quotes"}
               </button>
               <button className="secondary-action primary-inline" onClick={() => runSetupStep("fill")} disabled={!wallet || Boolean(wrongNetwork) || !canFillSelectedTakerStrategy || !takerStrategiesActive || pending !== null || !fillAmount}>
+                {pending === "fill" ? <span className="button-spinner dark" aria-hidden="true" /> : null}
                 {pending === "fill" ? "Confirming..." : `Fill ${strategyInputs[fillAsset].label}`}
               </button>
             </div>
@@ -722,6 +725,10 @@ export function isStrategyDraftUnchanged(assetDraft: StrategySetDraft["assets"][
     const current = leg.ladder[index];
     return Number(row.entryPrice) === current.entryPrice && Number(row.maxSpend) === current.maxSpend;
   });
+}
+
+export function isTakerFillPending(pending: StepKey | "connect" | "switch" | "refresh" | null) {
+  return pending === "quote" || pending === "fill";
 }
 
 function ActivityPanel({ eventLog }: { eventLog: TransactionUpdate[] }) {
