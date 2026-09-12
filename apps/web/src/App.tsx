@@ -87,6 +87,7 @@ export function App() {
   const [fillAmount, setFillAmount] = useState(() => getInitialFillAmount(firstStrategyKey));
   const [makerReserveBalance, setMakerReserveBalance] = useState<number | null>(null);
   const [takerMusdcBalance, setTakerMusdcBalance] = useState<number | null>(null);
+  const [strategyLoadCount, setStrategyLoadCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const reserveCreated = Boolean(completed.createReserve);
   const strategiesActive = activeLegKeys.length > 0;
@@ -102,7 +103,7 @@ export function App() {
   const selectedTakerStrategy = takerStrategies.find((strategy) => strategy.id === selectedTakerStrategyId) ?? takerStrategies[0] ?? null;
   const takerStrategiesActive = takerStrategies.length > 0;
   const takerFillPending = isTakerFillPending(pending);
-  const strategyListLoading = isStrategyListLoading(pending);
+  const strategyListLoading = isStrategyListLoading(pending, strategyLoadCount > 0);
 
   useEffect(() => {
     if (!hasInjectedWallet()) return;
@@ -237,50 +238,60 @@ export function App() {
   }
 
   async function loadSnapshot(target: MakerSession, connectedAccount = wallet?.account) {
-    const snapshot = await readOnchainSnapshot(target.maker, target.reserveId);
-    setState(applySnapshot(snapshot.reserve, snapshot.legs));
-    setMakerReserveBalance(formatTokenAmount(snapshot.balances[TOKENS.mUSDC]));
-    if (connectedAccount) {
-      const balance = await readMockTokenBalance(connectedAccount, TOKENS.mUSDC);
-      setTakerMusdcBalance(formatTokenAmount(balance));
+    setStrategyLoadCount((count) => count + 1);
+    try {
+      const snapshot = await readOnchainSnapshot(target.maker, target.reserveId);
+      setState(applySnapshot(snapshot.reserve, snapshot.legs));
+      setMakerReserveBalance(formatTokenAmount(snapshot.balances[TOKENS.mUSDC]));
+      if (connectedAccount) {
+        const balance = await readMockTokenBalance(connectedAccount, TOKENS.mUSDC);
+        setTakerMusdcBalance(formatTokenAmount(balance));
+      }
+      const nextActiveLegKeys = selectActiveStrategyKeys(strategyKeys, snapshot.legs, snapshot.shipped);
+      setActiveLegKeys(nextActiveLegKeys);
+      setFillAsset((current) => {
+        if (nextActiveLegKeys.includes(current) || nextActiveLegKeys.length === 0) return current;
+        const nextAsset = nextActiveLegKeys[0];
+        setFillAmount(getFillAmountDefault(nextAsset));
+        return nextAsset;
+      });
+      setCompleted((previous) => ({
+        ...previous,
+        createReserve: snapshot.reserve.exists,
+        addStrategy: nextActiveLegKeys.length > 0,
+        removeStrategy: false
+      }));
+    } finally {
+      setStrategyLoadCount((count) => Math.max(0, count - 1));
     }
-    const nextActiveLegKeys = selectActiveStrategyKeys(strategyKeys, snapshot.legs, snapshot.shipped);
-    setActiveLegKeys(nextActiveLegKeys);
-    setFillAsset((current) => {
-      if (nextActiveLegKeys.includes(current) || nextActiveLegKeys.length === 0) return current;
-      const nextAsset = nextActiveLegKeys[0];
-      setFillAmount(getFillAmountDefault(nextAsset));
-      return nextAsset;
-    });
-    setCompleted((previous) => ({
-      ...previous,
-      createReserve: snapshot.reserve.exists,
-      addStrategy: nextActiveLegKeys.length > 0,
-      removeStrategy: false
-    }));
   }
 
   async function loadTakerStrategies(connectedAccount = wallet?.account) {
-    const strategies = await readTakerStrategies();
-    setTakerStrategies(strategies);
-    setSelectedTakerStrategyId((current) => {
-      if (strategies.some((strategy) => strategy.id === current)) return current;
-      const next = strategies[0];
-      if (next) {
-        setFillAsset(next.key);
-        setFillAmount(getFillAmountDefault(next.key));
+    setStrategyLoadCount((count) => count + 1);
+    try {
+      const strategies = await readTakerStrategies();
+      setTakerStrategies(strategies);
+      setSelectedTakerStrategyId((current) => {
+        if (strategies.some((strategy) => strategy.id === current)) return current;
+        const next = strategies[0];
+        if (next) {
+          setFillAsset(next.key);
+          setFillAmount(getFillAmountDefault(next.key));
+        }
+        return next?.id ?? "";
+      });
+      setTakerQuotes((current) => Object.fromEntries(strategies.flatMap((strategy) => current[strategy.id] ? [[strategy.id, current[strategy.id]]] : [])));
+      if (connectedAccount) {
+        const balance = await readMockTokenBalance(connectedAccount, TOKENS.mUSDC);
+        setTakerMusdcBalance(formatTokenAmount(balance));
       }
-      return next?.id ?? "";
-    });
-    setTakerQuotes((current) => Object.fromEntries(strategies.flatMap((strategy) => current[strategy.id] ? [[strategy.id, current[strategy.id]]] : [])));
-    if (connectedAccount) {
-      const balance = await readMockTokenBalance(connectedAccount, TOKENS.mUSDC);
-      setTakerMusdcBalance(formatTokenAmount(balance));
+      setCompleted((previous) => ({
+        ...previous,
+        addStrategy: strategies.length > 0
+      }));
+    } finally {
+      setStrategyLoadCount((count) => Math.max(0, count - 1));
     }
-    setCompleted((previous) => ({
-      ...previous,
-      addStrategy: strategies.length > 0
-    }));
   }
 
   async function runSetupStep(step: StepKey) {
@@ -734,8 +745,8 @@ export function isTakerFillPending(pending: StepKey | "connect" | "switch" | "re
   return pending === "quote" || pending === "fill";
 }
 
-export function isStrategyListLoading(pending: StepKey | "connect" | "switch" | "refresh" | null) {
-  return pending === "refresh";
+export function isStrategyListLoading(pending: StepKey | "connect" | "switch" | "refresh" | null, strategyDataLoading = false) {
+  return strategyDataLoading || pending === "refresh";
 }
 
 function ActivityPanel({ eventLog }: { eventLog: TransactionUpdate[] }) {

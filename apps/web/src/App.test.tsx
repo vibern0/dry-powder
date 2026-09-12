@@ -90,9 +90,10 @@ describe("taker fill loading state", () => {
 
 describe("strategy list loading state", () => {
   it("shows list loading only while strategy data is refreshing", () => {
-    expect(isStrategyListLoading("refresh")).toBe(true);
-    expect(isStrategyListLoading("quote")).toBe(false);
-    expect(isStrategyListLoading("fill")).toBe(false);
-    expect(isStrategyListLoading(null)).toBe(false);
+    expect(isStrategyListLoading("refresh", false)).toBe(true);
+    expect(isStrategyListLoading("connect", true)).toBe(true);
+    expect(isStrategyListLoading("quote", false)).toBe(false);
+    expect(isStrategyListLoading("fill", false)).toBe(false);
+    expect(isStrategyListLoading(null, false)).toBe(false);
   });
 });
