@@ -32,8 +32,8 @@ describe("onchain strategy helpers", () => {
     expect(strategy.order.traits >> 254n).toBe(1n);
     expect(strategy.order.data).toContain(reserveId.slice(2));
     expect(strategy.strategyBytes).toBe(encodedOrder);
-    expect(strategy.shipTokens).toEqual([TOKENS.mUSDC, TOKENS.mETH]);
-    expect(strategy.shipAmounts).toEqual([parseUnits("18000", 6), parseUnits("10", 18)]);
+    expect(strategy.shipTokens).toEqual([TOKENS.mUSDC]);
+    expect(strategy.shipAmounts).toEqual([parseUnits("18000", 6)]);
   });
 
   it("builds taker quotes against the stored maker, not the connected taker", () => {
@@ -67,7 +67,7 @@ describe("onchain strategy helpers", () => {
     const keys = Object.keys(strategyInputs);
 
     expect(keys).toEqual(["eth", "wbtc", "link", "arb", "op", "bnb", "sol"]);
-    expect(buildStrategy("arb", "0x000000000000000000000000000000000000dEaD", reserveId).shipTokens).toEqual([TOKENS.mUSDC, TOKENS.mARB]);
+    expect(buildStrategy("arb", "0x000000000000000000000000000000000000dEaD", reserveId).shipTokens).toEqual([TOKENS.mUSDC]);
     expect(buildFillIntent("sol", "0x000000000000000000000000000000000000dEaD", reserveId, "321").approvalToken).toBe(TOKENS.mSOL);
   });
 

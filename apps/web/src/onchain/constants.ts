@@ -3,6 +3,7 @@ import type { Address } from "viem";
 export const SEPOLIA_CHAIN_ID = 11155111;
 export const AQUA_ADDRESS = "0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a" as Address;
 export const DRY_POWDER_ROUTER = "0x5d1e7bCc9a9AD87FE2Cba803EDe1cE59232471E9" as Address;
+export const DRY_POWDER_ROUTER_DEPLOYMENT_BLOCK = 11_680_000n;
 
 export const TOKENS = {
   mUSDC: "0xb189B7E78dC904CBA4B634679103e785A6f8EC70",
@@ -25,6 +26,16 @@ export const USE_TRANSFER_FROM_AND_AQUA_PUSH = 0x0040;
 export const IS_A_TO_B = 0x0080;
 
 export const ROUTER_ABI = [
+  {
+    type: "event",
+    name: "LegAdded",
+    inputs: [
+      { name: "maker", type: "address", indexed: true },
+      { name: "reserveId", type: "bytes32", indexed: true },
+      { name: "token", type: "address", indexed: true },
+      { name: "maxSpend", type: "uint256", indexed: false }
+    ]
+  },
   {
     type: "function",
     name: "createReserve",

@@ -168,8 +168,8 @@ export function buildStrategy(key: LegKey, maker: Address, reserveId: Hex, overr
     exactOutTraits: buildExactOutTakerTraits(direction),
     strategyBytes,
     strategyHash: keccak256(strategyBytes),
-    shipTokens: [TOKENS.mUSDC, input.asset],
-    shipAmounts: [input.reserveAmount, input.assetAmount]
+    shipTokens: [TOKENS.mUSDC],
+    shipAmounts: [input.reserveAmount]
   };
 }
 

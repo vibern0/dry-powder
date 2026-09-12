@@ -29,18 +29,21 @@ import {
   executeFillForMaker,
   forgetWalletConnection,
   getOrCreateMakerSession,
+  getTakerViewMakerSession,
   hasInjectedWallet,
   mintMakerReserveTokens,
   mintTakerAssetTokens,
   readMockTokenBalance,
   quoteStrategies,
   readOnchainSnapshot,
+  readTakerStrategies,
   reconnectWallet,
   removeStrategy,
   switchToSepolia,
   useConnectedAccountAsMaker,
   type StepKey,
   type MakerSession,
+  type TakerStrategy,
   type TransactionUpdate,
   type WalletState
 } from "./onchain/client";
@@ -72,10 +75,14 @@ export function App() {
   const [pending, setPending] = useState<StepKey | "connect" | "switch" | "refresh" | null>(null);
   const [eventLog, setEventLog] = useState<TransactionUpdate[]>([]);
   const [quotes, setQuotes] = useState<Record<LegKey, string> | null>(null);
+  const [takerQuotes, setTakerQuotes] = useState<Record<string, string>>({});
   const [page, setPage] = useState<DemoPage>("maker");
   const [activeLegKeys, setActiveLegKeys] = useState<LegKey[]>([]);
+  const [takerStrategies, setTakerStrategies] = useState<TakerStrategy[]>([]);
+  const [selectedTakerStrategyId, setSelectedTakerStrategyId] = useState("");
   const [strategyModalOpen, setStrategyModalOpen] = useState(false);
   const [strategyDraft, setStrategyDraft] = useState<StrategySetDraft>(() => getStrategySetDraftDefaults([]));
+  const [dirtyStrategyKeys, setDirtyStrategyKeys] = useState<LegKey[]>([]);
   const [fillAsset, setFillAsset] = useState<LegKey>(firstStrategyKey);
   const [fillAmount, setFillAmount] = useState(() => getInitialFillAmount(firstStrategyKey));
   const [makerReserveBalance, setMakerReserveBalance] = useState<number | null>(null);
@@ -92,6 +99,8 @@ export function App() {
   const role = wallet ? roleForAccount(wallet.account, makerSession?.maker ?? null) : "maker";
   const reserveId = makerSession?.reserveId;
   const fillableStrategyKeys = activeLegKeys.length ? activeLegKeys : strategyKeys;
+  const selectedTakerStrategy = takerStrategies.find((strategy) => strategy.id === selectedTakerStrategyId) ?? takerStrategies[0] ?? null;
+  const takerStrategiesActive = takerStrategies.length > 0;
 
   useEffect(() => {
     if (!hasInjectedWallet()) return;
@@ -123,10 +132,11 @@ export function App() {
   async function connect() {
     await run("connect", async () => {
       const next = await connectWallet();
-      const session = makerSession ?? getOrCreateMakerSession(next.account);
+      const session = selectMakerSessionForPage(page, makerSession, next.account);
       setWallet(next);
       setMakerSession(session);
       if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(session, next.account);
+      if (next.chainId === SEPOLIA_CHAIN_ID && page === "taker") await loadTakerStrategies(next.account);
       setEventLog([{ step: "quote", message: `Wallet connected as ${roleForAccount(next.account, session.maker)}: ${shortAddress(next.account)}` }]);
     });
   }
@@ -135,10 +145,17 @@ export function App() {
     forgetWalletConnection();
     setWallet(null);
     setQuotes(null);
+    setState(initialDemo);
+    setMakerReserveBalance(null);
     setTakerMusdcBalance(null);
+    setCompleted({});
+    setActiveLegKeys([]);
+    setTakerStrategies([]);
+    setSelectedTakerStrategyId("");
+    setTakerQuotes({});
     setError(null);
     setPending(null);
-    setEventLog([{ step: "quote", message: "Wallet disconnected locally. Maker session preserved." }]);
+    setEventLog([{ step: "quote", message: "Wallet disconnected locally." }]);
   }
 
   async function switchNetwork() {
@@ -146,9 +163,10 @@ export function App() {
       await switchToSepolia();
       const next = await connectWallet();
       setWallet(next);
-      const session = makerSession ?? getOrCreateMakerSession(next.account);
+      const session = selectMakerSessionForPage(page, makerSession, next.account);
       setMakerSession(session);
       if (next.chainId === SEPOLIA_CHAIN_ID) await loadSnapshot(session, next.account);
+      if (next.chainId === SEPOLIA_CHAIN_ID && page === "taker") await loadTakerStrategies(next.account);
     });
   }
 
@@ -162,6 +180,9 @@ export function App() {
     setCompleted({});
     setQuotes(null);
     setActiveLegKeys([]);
+    setTakerStrategies([]);
+    setSelectedTakerStrategyId("");
+    setTakerQuotes({});
     setEventLog([{ step: "quote", message: "Fresh reserve id ready for another demo run." }]);
   }
 
@@ -175,13 +196,41 @@ export function App() {
     setCompleted({});
     setQuotes(null);
     setActiveLegKeys([]);
+    setTakerStrategies([]);
+    setSelectedTakerStrategyId("");
+    setTakerQuotes({});
     setEventLog([{ step: "quote", message: `Maker set to ${shortAddress(wallet.account)}.` }]);
   }
 
   async function refresh() {
+    if (page === "taker") {
+      await run("refresh", async () => {
+        await loadTakerStrategies(wallet?.account);
+      });
+      return;
+    }
     if (!makerSession) return;
     await run("refresh", async () => {
       await loadSnapshot(makerSession);
+    });
+  }
+
+  function changePage(nextPage: DemoPage) {
+    setPage(nextPage);
+    if (!wallet || wrongNetwork) return;
+
+    const session = selectMakerSessionForPage(nextPage, makerSession, wallet.account);
+    if (nextPage === "taker") {
+      void run("refresh", async () => {
+        await loadTakerStrategies(wallet.account);
+      });
+      return;
+    }
+    if (session.maker === makerSession?.maker && session.reserveId === makerSession.reserveId) return;
+
+    setMakerSession(session);
+    void run("refresh", async () => {
+      await loadSnapshot(session, wallet.account);
     });
   }
 
@@ -209,6 +258,29 @@ export function App() {
     }));
   }
 
+  async function loadTakerStrategies(connectedAccount = wallet?.account) {
+    const strategies = await readTakerStrategies();
+    setTakerStrategies(strategies);
+    setSelectedTakerStrategyId((current) => {
+      if (strategies.some((strategy) => strategy.id === current)) return current;
+      const next = strategies[0];
+      if (next) {
+        setFillAsset(next.key);
+        setFillAmount(getFillAmountDefault(next.key));
+      }
+      return next?.id ?? "";
+    });
+    setTakerQuotes((current) => Object.fromEntries(strategies.flatMap((strategy) => current[strategy.id] ? [[strategy.id, current[strategy.id]]] : [])));
+    if (connectedAccount) {
+      const balance = await readMockTokenBalance(connectedAccount, TOKENS.mUSDC);
+      setTakerMusdcBalance(formatTokenAmount(balance));
+    }
+    setCompleted((previous) => ({
+      ...previous,
+      addStrategy: strategies.length > 0
+    }));
+  }
+
   async function runSetupStep(step: StepKey) {
     if (!wallet || !makerSession) return;
     const actions: Record<StepKey, () => Promise<void>> = {
@@ -221,11 +293,23 @@ export function App() {
       editStrategy: async () => {},
       removeStrategy: async () => {},
       quote: async () => {
+        if (page === "taker" && selectedTakerStrategy) {
+          const [quote] = await quoteStrategies(selectedTakerStrategy.maker, selectedTakerStrategy.reserveId, [selectedTakerStrategy.key]);
+          setTakerQuotes((current) => ({ ...current, [selectedTakerStrategy.id]: quote.label }));
+          pushEvent({ step: "quote", message: `Quote refreshed for ${strategyInputs[selectedTakerStrategy.key].label} from ${shortAddress(selectedTakerStrategy.maker)}.` });
+          return;
+        }
         const nextQuotes = await quoteStrategies(makerSession.maker, makerSession.reserveId, activeLegKeys);
         setQuotes(Object.fromEntries(nextQuotes.map((quote) => [quote.key, quote.label])) as Record<LegKey, string>);
         pushEvent({ step: "quote", message: "Quotes refreshed from DryPowderRouter." });
       },
       fill: async () => {
+        if (page === "taker" && selectedTakerStrategy) {
+          await executeFillForMaker(wallet.account, selectedTakerStrategy.maker, selectedTakerStrategy.reserveId, selectedTakerStrategy.key, fillAmount, pushEvent);
+          setCompleted((previous) => ({ ...previous, fill: true }));
+          await loadTakerStrategies(wallet.account);
+          return;
+        }
         await executeFillForMaker(wallet.account, makerSession.maker, makerSession.reserveId, fillAsset, fillAmount, pushEvent);
         setCompleted((previous) => ({ ...previous, fill: true }));
         await refresh();
@@ -261,6 +345,7 @@ export function App() {
         return activeLegKeys.includes(defaultDraft.asset) && currentDraft && hasCurrentSpend ? { ...currentDraft, enabled: true } : defaultDraft;
       })
     }));
+    setDirtyStrategyKeys([]);
     setStrategyModalOpen(true);
   }
 
@@ -269,17 +354,27 @@ export function App() {
     setFillAmount(getFillAmountDefault(asset));
   }
 
+  function updateTakerStrategy(id: string) {
+    const strategy = takerStrategies.find((candidate) => candidate.id === id);
+    if (!strategy) return;
+    setSelectedTakerStrategyId(strategy.id);
+    setFillAsset(strategy.key);
+    setFillAmount(getFillAmountDefault(strategy.key));
+  }
+
   async function setSelectedStrategy(draft: StrategySetDraft) {
     if (!wallet || !makerSession || !isMakerRole) return;
     await run("addStrategy", async () => {
       const enabledKeys = draft.assets.filter((asset) => asset.enabled).map((asset) => asset.asset);
       const activeKeySet = new Set(activeLegKeys);
+      const dirtyKeySet = new Set(dirtyStrategyKeys);
       for (const key of activeLegKeys) {
         if (!enabledKeys.includes(key)) await removeStrategy(wallet.account, makerSession.reserveId, key, pushEvent);
       }
       for (const assetDraft of draft.assets) {
         if (!assetDraft.enabled) continue;
         if (activeKeySet.has(assetDraft.asset)) {
+          if (!dirtyKeySet.has(assetDraft.asset)) continue;
           await editStrategy(wallet.account, makerSession.reserveId, assetDraft.asset, assetDraft.ladder, pushEvent);
         } else {
           await addStrategy(wallet.account, makerSession.reserveId, assetDraft.asset, pushEvent, {
@@ -315,6 +410,11 @@ export function App() {
 
   const isMakerRole = role === "maker";
   const isTakerRole = role === "taker";
+  const canFillSelectedTakerStrategy = Boolean(
+    wallet &&
+    selectedTakerStrategy &&
+    wallet.account.toLowerCase() !== selectedTakerStrategy.maker.toLowerCase()
+  );
 
   return (
     <main className="app-shell">
@@ -323,7 +423,7 @@ export function App() {
         pending={pending}
         page={page}
         canResetReserve={Boolean(wallet) && isMakerRole && pending === null}
-        onPageChange={setPage}
+        onPageChange={changePage}
         onResetReserve={rotateReserve}
         onConnect={connect}
         onDisconnect={disconnect}
@@ -419,10 +519,12 @@ export function App() {
           {page === "taker" ? (
             <div className="fill-panel">
               <label>
-                <span>Fill asset</span>
-                <select className="select-input" value={fillAsset} onChange={(event) => updateFillAsset(event.target.value as LegKey)} disabled={!strategiesActive}>
-                  {fillableStrategyKeys.map((key) => (
-                    <option value={key} key={key}>{strategyInputs[key].label}</option>
+                <span>Fill strategy</span>
+                <select className="select-input" value={selectedTakerStrategy?.id ?? ""} onChange={(event) => updateTakerStrategy(event.target.value)} disabled={!takerStrategiesActive}>
+                  {takerStrategies.map((strategy) => (
+                    <option value={strategy.id} key={strategy.id}>
+                      {strategyInputs[strategy.key].label} · {shortAddress(strategy.maker)}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -430,15 +532,27 @@ export function App() {
                 <span>mUSDC amount</span>
                 <input className="text-input" value={fillAmount} onChange={(event) => setFillAmount(event.target.value)} inputMode="decimal" />
               </label>
-              <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !strategiesActive || pending !== null}>
+              <button className="secondary-action" onClick={() => runSetupStep("quote")} disabled={!wallet || Boolean(wrongNetwork) || !takerStrategiesActive || pending !== null}>
                 {pending === "quote" ? "Quoting..." : "Refresh quotes"}
               </button>
-              <button className="secondary-action primary-inline" onClick={() => runSetupStep("fill")} disabled={!wallet || Boolean(wrongNetwork) || !isTakerRole || !strategiesActive || pending !== null || !fillAmount}>
+              <button className="secondary-action primary-inline" onClick={() => runSetupStep("fill")} disabled={!wallet || Boolean(wrongNetwork) || !canFillSelectedTakerStrategy || !takerStrategiesActive || pending !== null || !fillAmount}>
                 {pending === "fill" ? "Confirming..." : `Fill ${strategyInputs[fillAsset].label}`}
               </button>
             </div>
           ) : null}
-          {strategiesActive ? (
+          {page === "taker" && takerStrategiesActive ? (
+            <div className="leg-grid">
+              {takerStrategies.map((strategy) => (
+                <LegCard
+                  key={strategy.id}
+                  leg={toTakerLeg(strategy)}
+                  quote={takerQuotes[strategy.id]}
+                  active={strategy.id === selectedTakerStrategy?.id && Boolean(completed.fill)}
+                  meta={`Maker ${shortAddress(strategy.maker)}`}
+                />
+              ))}
+            </div>
+          ) : page !== "taker" && strategiesActive ? (
             <div className="leg-grid">
               {visibleState.legs.map((leg) => (
                 <LegCard
@@ -452,7 +566,7 @@ export function App() {
           ) : (
             <EmptyPanel
               title={reserveCreated ? "No Aqua strategies active" : "No Aqua strategies yet"}
-              detail={page === "maker" ? "Use Add to create and ship one strategy at a time." : "Ask the maker to add a strategy, then quote and fill it here."}
+              detail={page === "maker" ? "Use Add to create and ship one strategy at a time." : "No shipped strategies were found on Sepolia yet."}
             />
           )}
         </div>
@@ -466,12 +580,33 @@ export function App() {
           makerReserveBalance={makerReserveBalance ?? summary.totalBudget}
           pending={pending}
           onChange={setStrategyDraft}
+          onDirtyAsset={(asset) => setDirtyStrategyKeys((previous) => previous.includes(asset) ? previous : [...previous, asset])}
           onClose={() => setStrategyModalOpen(false)}
           onSubmit={setSelectedStrategy}
         />
       ) : null}
     </main>
   );
+}
+
+export function selectMakerSessionForAccount(
+  current: MakerSession | null,
+  account: WalletState["account"],
+  createSession = getOrCreateMakerSession
+) {
+  if (current?.maker.toLowerCase() === account.toLowerCase()) return current;
+  return createSession(account);
+}
+
+export function selectMakerSessionForPage(
+  page: DemoPage,
+  current: MakerSession | null,
+  account: WalletState["account"],
+  createSession = getOrCreateMakerSession,
+  getTakerSession = getTakerViewMakerSession
+) {
+  if (page === "taker") return getTakerSession(account);
+  return selectMakerSessionForAccount(current, account, createSession);
 }
 
 function TopNav({
@@ -574,6 +709,21 @@ function applySnapshot(reserveSnapshot: { totalBudget: bigint; spent: bigint }, 
   };
 }
 
+function toTakerLeg(strategy: TakerStrategy): Leg {
+  const base = initialDemo.legs.find((leg) => leg.key === strategy.key)!;
+  return applyLegSnapshot(base, strategy.leg);
+}
+
+export function isStrategyDraftUnchanged(assetDraft: StrategySetDraft["assets"][number], legs: Leg[]) {
+  const leg = legs.find((candidate) => candidate.key === assetDraft.asset);
+  if (!leg || leg.ladder.length !== assetDraft.ladder.length) return false;
+
+  return assetDraft.ladder.every((row, index) => {
+    const current = leg.ladder[index];
+    return Number(row.entryPrice) === current.entryPrice && Number(row.maxSpend) === current.maxSpend;
+  });
+}
+
 function ActivityPanel({ eventLog }: { eventLog: TransactionUpdate[] }) {
   return (
     <div className="events-column">
@@ -598,6 +748,7 @@ function StrategyModal({
   draft,
   makerReserveBalance,
   pending,
+  onDirtyAsset,
   onChange,
   onClose,
   onSubmit
@@ -605,6 +756,7 @@ function StrategyModal({
   draft: StrategySetDraft;
   makerReserveBalance: number;
   pending: StepKey | "connect" | "switch" | "refresh" | null;
+  onDirtyAsset: (asset: LegKey) => void;
   onChange: (draft: StrategySetDraft) => void;
   onClose: () => void;
   onSubmit: (draft: StrategySetDraft) => void;
@@ -620,6 +772,7 @@ function StrategyModal({
   function addAsset() {
     const asset = availableAssets.some((assetDraft) => assetDraft.asset === assetToAdd) ? assetToAdd : availableAssets[0]?.asset;
     if (!asset) return;
+    onDirtyAsset(asset);
     onChange(enableStrategySetAsset(draft, asset));
     setAssetToAdd(availableAssets.find((assetDraft) => assetDraft.asset !== asset)?.asset ?? "");
   }
@@ -630,6 +783,7 @@ function StrategyModal({
   }
 
   function updateRow(asset: LegKey, index: number, field: "entryPrice" | "maxSpend", value: string) {
+    onDirtyAsset(asset);
     onChange({
       ...draft,
       assets: draft.assets.map((assetDraft) => assetDraft.asset === asset ? {
@@ -873,11 +1027,13 @@ function isStepDisabled(step: StepKey, completed: Partial<Record<StepKey, boolea
 function LegCard({
   leg,
   quote,
-  active
+  active,
+  meta
 }: {
   leg: Leg;
   quote?: string;
   active: boolean;
+  meta?: string;
 }) {
   const utilization = (leg.spent / leg.maxSpend) * 100;
   const changed = leg.currentMaxPrice !== leg.baseMaxPrice;
@@ -890,7 +1046,7 @@ function LegCard({
         </div>
         <div>
           <h2>{leg.symbol}</h2>
-          <p>{leg.name}</p>
+          <p>{meta ?? leg.name}</p>
         </div>
       </div>
       <div className="leg-price">

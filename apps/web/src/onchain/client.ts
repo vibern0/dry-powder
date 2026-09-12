@@ -2,11 +2,13 @@ import { ABI } from "@1inch/aqua-sdk";
 import {
   createPublicClient,
   createWalletClient,
+  encodeFunctionData,
   custom,
   formatUnits,
   getAddress,
   http,
   maxUint256,
+  parseAbiItem,
   parseUnits,
   type Address,
   type EIP1193Provider,
@@ -17,7 +19,7 @@ import {
 } from "viem";
 import { sepolia } from "viem/chains";
 import { assetCatalog } from "../assets";
-import { AQUA_ADDRESS, DRY_POWDER_ROUTER, MOCK_ERC20_ABI, ROUTER_ABI, SEPOLIA_CHAIN_ID, TOKENS } from "./constants";
+import { AQUA_ADDRESS, DRY_POWDER_ROUTER, DRY_POWDER_ROUTER_DEPLOYMENT_BLOCK, MOCK_ERC20_ABI, ROUTER_ABI, SEPOLIA_CHAIN_ID, TOKENS } from "./constants";
 import { buildFillIntent, buildSetupPlan, buildStrategy, buildStrategyPlan, createReserveId, strategyInputs, strategyKeys, usdc, type LegKey, type StrategyPlanInput } from "./strategy";
 import { assertHasSepoliaGas, formatEthBalance } from "./strategy";
 
@@ -45,6 +47,14 @@ export type MakerSession = {
   reserveId: Hex;
 };
 
+export type TakerStrategy = {
+  id: string;
+  maker: Address;
+  reserveId: Hex;
+  key: LegKey;
+  leg: Awaited<ReturnType<typeof readOnchainSnapshot>>["legs"][LegKey];
+};
+
 export type TransactionUpdate = {
   step: StepKey;
   message: string;
@@ -54,6 +64,10 @@ export type TransactionUpdate = {
 type SendUpdate = (update: TransactionUpdate) => void;
 
 const WALLET_CONNECTION_KEY = "dry-powder.wallet-connected";
+const LOG_BLOCK_CHUNK_SIZE = 9_999n;
+const AQUA_STRATEGY_IMMUTABLE_SELECTOR = "0x879f237b";
+const AQUA_DOCK_MISMATCH_SELECTOR = "0xbbe8d44d";
+const LEG_ADDED_EVENT = parseAbiItem("event LegAdded(address indexed maker, bytes32 indexed reserveId, address indexed token, uint256 maxSpend)");
 
 declare global {
   interface Window {
@@ -115,14 +129,18 @@ export async function switchToSepolia() {
 
 export function getOrCreateMakerSession(account: Address): MakerSession {
   const stored = getStoredMakerSession();
-  if (stored) return stored;
   const maker = getAddress(account);
+  if (stored && getAddress(stored.maker) === maker) return stored;
   const session = {
     maker,
     reserveId: getOrCreateReserveId(maker)
   };
-  saveMakerSession(session);
+  if (!stored) saveMakerSession(session);
   return session;
+}
+
+export function getTakerViewMakerSession(account: Address): MakerSession {
+  return getStoredMakerSession() ?? getOrCreateMakerSession(account);
 }
 
 export function createFreshMakerSession(account: Address): MakerSession {
@@ -246,11 +264,19 @@ export async function addStrategy(account: Address, reserveId: Hex, key: LegKey,
   if (!reserve.exists) {
     await createReserve(account, reserveId, onUpdate);
   }
-  await addLeg(account, reserveId, key, onUpdate, inputs);
+  const leg = reserve.exists ? await readLeg(account, reserveId, key) : { exists: false };
+  if (leg.exists) {
+    await editStrategy(account, reserveId, key, inputs.ladder, onUpdate);
+  } else {
+    await addLeg(account, reserveId, key, onUpdate, inputs);
+  }
   if (!reserve.active) {
     await activateReserve(account, reserveId, onUpdate);
   }
-  await shipStrategy(account, reserveId, key, onUpdate, inputs);
+  await ensureStrategyInventory(account, reserveId, key, inputs, onUpdate);
+  if (!await isStrategyShipped(account, reserveId, key)) {
+    await shipStrategy(account, reserveId, key, onUpdate, inputs);
+  }
 }
 
 export async function editStrategy(account: Address, reserveId: Hex, key: LegKey, ladder: StrategyPlanInput["ladder"], onUpdate: SendUpdate) {
@@ -273,6 +299,21 @@ export async function shipStrategy(account: Address, reserveId: Hex, key: LegKey
   const { publicClient, walletClient } = makeClients(account);
   assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
   const transaction = buildStrategyPlan(account, reserveId, key, inputs).shipTransaction;
+  try {
+    await publicClient.call({
+      account,
+      to: transaction.to,
+      data: transaction.data,
+      value: transaction.value
+    });
+  } catch (error) {
+    if (isAquaAlreadyShippedError(error)) {
+      onUpdate({ step: "addStrategy", message: `${strategyInputs[key].label} Aqua strategy already shipped` });
+      return;
+    }
+    throw error;
+  }
+
   const hash = await walletClient.sendTransaction({
     account,
     chain: sepolia,
@@ -284,6 +325,55 @@ export async function shipStrategy(account: Address, reserveId: Hex, key: LegKey
   await publicClient.waitForTransactionReceipt({ hash });
 }
 
+async function ensureStrategyInventory(account: Address, reserveId: Hex, key: LegKey, inputs: StrategyPlanInput, onUpdate: SendUpdate) {
+  const { publicClient, walletClient } = makeClients(account);
+  assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
+  const strategy = buildStrategyPlan(account, reserveId, key, inputs).strategy;
+
+  for (const [index, token] of strategy.shipTokens.entries()) {
+    const amount = strategy.shipAmounts[index];
+    const balance = await publicClient.readContract({
+      address: token,
+      abi: MOCK_ERC20_ABI,
+      functionName: "balanceOf",
+      args: [account]
+    });
+    const label = tokenLabel(token, key);
+
+    if (balance < amount) {
+      const hash = await walletClient.writeContract({
+        account,
+        chain: sepolia,
+        address: token,
+        abi: MOCK_ERC20_ABI,
+        functionName: "mint",
+        args: [account, amount - balance]
+      });
+      onUpdate({ step: "addStrategy", message: `Minting maker ${formatUnits(amount - balance, tokenDecimals(token, key))} ${label}`, hash });
+      await publicClient.waitForTransactionReceipt({ hash });
+    }
+
+    const allowance = await publicClient.readContract({
+      address: token,
+      abi: MOCK_ERC20_ABI,
+      functionName: "allowance",
+      args: [account, AQUA_ADDRESS]
+    });
+    if (allowance < amount) {
+      const hash = await walletClient.writeContract({
+        account,
+        chain: sepolia,
+        address: token,
+        abi: MOCK_ERC20_ABI,
+        functionName: "approve",
+        args: [AQUA_ADDRESS, maxUint256]
+      });
+      onUpdate({ step: "addStrategy", message: `Approving ${label} for Aqua`, hash });
+      await publicClient.waitForTransactionReceipt({ hash });
+    }
+  }
+}
+
 export async function removeStrategy(account: Address, reserveId: Hex, key: LegKey, onUpdate: SendUpdate) {
   await dockStrategy(account, reserveId, key, onUpdate);
   await removeLeg(account, reserveId, key, onUpdate);
@@ -292,7 +382,32 @@ export async function removeStrategy(account: Address, reserveId: Hex, key: LegK
 async function dockStrategy(account: Address, reserveId: Hex, key: LegKey, onUpdate: SendUpdate) {
   const { publicClient, walletClient } = makeClients(account);
   assertHasSepoliaGas(await publicClient.getBalance({ address: account }));
-  const transaction = buildStrategyPlan(account, reserveId, key).dockTransaction;
+  const plan = buildStrategyPlan(account, reserveId, key);
+  const dockTokens = await readDockTokens(publicClient, account, reserveId, key);
+  const transaction = {
+    to: AQUA_ADDRESS,
+    data: encodeFunctionData({
+      abi: ABI.AQUA_ABI,
+      functionName: "dock",
+      args: [DRY_POWDER_ROUTER, plan.strategy.strategyHash, dockTokens]
+    }),
+    value: 0n
+  };
+  try {
+    await publicClient.call({
+      account,
+      to: transaction.to,
+      data: transaction.data,
+      value: transaction.value
+    });
+  } catch (error) {
+    if (isAquaDockMismatchError(error)) {
+      onUpdate({ step: "removeStrategy", message: `Skipping ${strategyInputs[key].label} Aqua dock; removing router leg only` });
+      return;
+    }
+    throw error;
+  }
+
   const hash = await walletClient.sendTransaction({
     account,
     chain: sepolia,
@@ -302,6 +417,30 @@ async function dockStrategy(account: Address, reserveId: Hex, key: LegKey, onUpd
   });
   onUpdate({ step: "removeStrategy", message: `Docking ${strategyInputs[key].label} Aqua strategy`, hash });
   await publicClient.waitForTransactionReceipt({ hash });
+}
+
+async function readDockTokens(publicClient: PublicClient, account: Address, reserveId: Hex, key: LegKey): Promise<Address[]> {
+  const plan = buildStrategyPlan(account, reserveId, key);
+  const candidates = [TOKENS.mUSDC, strategyInputs[key].asset];
+  const balances = await Promise.all(candidates.map(async (token) => {
+    const [, tokensCount] = await publicClient.readContract({
+      address: AQUA_ADDRESS,
+      abi: ABI.AQUA_ABI,
+      functionName: "rawBalances",
+      args: [account, DRY_POWDER_ROUTER, plan.strategy.strategyHash, token]
+    });
+    return { token, tokensCount };
+  }));
+  const expectedTokensCount = balances.reduce((max, balance) => balance.tokensCount > max ? balance.tokensCount : max, 0);
+  const recordedTokens = balances
+    .filter((balance) => balance.tokensCount === expectedTokensCount && balance.tokensCount > 0 && balance.tokensCount !== 255)
+    .map((balance) => balance.token);
+
+  if (expectedTokensCount > 0 && expectedTokensCount !== 255 && Number(expectedTokensCount) <= candidates.length) {
+    return candidates.slice(0, Number(expectedTokensCount));
+  }
+
+  return recordedTokens.length === Number(expectedTokensCount) ? recordedTokens : plan.strategy.shipTokens;
 }
 
 async function removeLeg(account: Address, reserveId: Hex, key: LegKey, onUpdate: SendUpdate) {
@@ -435,6 +574,62 @@ export async function readMockTokenBalance(account: Address, token: Address) {
   });
 }
 
+export async function readTakerStrategies(): Promise<TakerStrategy[]> {
+  const { publicClient } = makeClients();
+  const logs = await readLegAddedLogs(publicClient);
+  const entries = uniqueStrategyEntries(logs.flatMap((log) => {
+    const maker = log.args.maker;
+    const reserveId = log.args.reserveId;
+    const token = log.args.token;
+    const key = token ? keyForToken(token) : null;
+    return maker && reserveId && key ? [{ maker: getAddress(maker), reserveId, key }] : [];
+  }));
+  const sessions = uniqueSessions(entries.map(({ maker, reserveId }) => ({ maker, reserveId })));
+  const snapshots = await Promise.all(
+    sessions.map(async (session) => ({
+      ...session,
+      snapshot: await readOnchainSnapshot(session.maker, session.reserveId)
+    }))
+  );
+
+  return snapshots.flatMap(({ maker, reserveId, snapshot }) => {
+    if (!snapshot.reserve.active || !snapshot.reserve.exists) return [];
+
+    const entryKeys = entries
+      .filter((entry) => entry.maker === maker && entry.reserveId === reserveId)
+      .map((entry) => entry.key);
+
+    return entryKeys.flatMap((key) => {
+      const leg = snapshot.legs[key];
+      if (!leg.exists || snapshot.shipped[key] !== true) return [];
+      return [{
+        id: takerStrategyId(maker, reserveId, key),
+        maker,
+        reserveId,
+        key,
+        leg
+      }];
+    });
+  });
+}
+
+async function readLegAddedLogs(publicClient: PublicClient) {
+  const latest = await publicClient.getBlockNumber();
+  const logs = [];
+
+  for (let fromBlock = DRY_POWDER_ROUTER_DEPLOYMENT_BLOCK; fromBlock <= latest; fromBlock += LOG_BLOCK_CHUNK_SIZE + 1n) {
+    const toBlock = latest < fromBlock + LOG_BLOCK_CHUNK_SIZE ? latest : fromBlock + LOG_BLOCK_CHUNK_SIZE;
+    logs.push(...await publicClient.getLogs({
+      address: DRY_POWDER_ROUTER,
+      event: LEG_ADDED_EVENT,
+      fromBlock,
+      toBlock
+    }));
+  }
+
+  return logs;
+}
+
 async function readReserve(account: Address, reserveId: Hex) {
   const { publicClient } = makeClients(account);
   return publicClient.readContract({
@@ -443,6 +638,53 @@ async function readReserve(account: Address, reserveId: Hex) {
     functionName: "getReserve",
     args: [account, reserveId]
   });
+}
+
+async function readLeg(account: Address, reserveId: Hex, key: LegKey) {
+  const { publicClient } = makeClients(account);
+  return publicClient.readContract({
+    address: DRY_POWDER_ROUTER,
+    abi: ROUTER_ABI,
+    functionName: "getLeg",
+    args: [account, reserveId, strategyInputs[key].asset]
+  });
+}
+
+function uniqueSessions(sessions: Array<{ maker: Address; reserveId: Hex }>) {
+  const seen = new Set<string>();
+  return sessions.filter((session) => {
+    const id = `${session.maker.toLowerCase()}:${session.reserveId}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function uniqueStrategyEntries(entries: Array<{ maker: Address; reserveId: Hex; key: LegKey }>) {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const id = takerStrategyId(entry.maker, entry.reserveId, entry.key);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function takerStrategyId(maker: Address, reserveId: Hex, key: LegKey) {
+  return `${maker.toLowerCase()}:${reserveId}:${key}`;
+}
+
+function keyForToken(token: Address): LegKey | null {
+  const normalized = getAddress(token);
+  return strategyKeys.find((key) => getAddress(strategyInputs[key].asset) === normalized) ?? null;
+}
+
+function tokenLabel(token: Address, strategyKey: LegKey) {
+  return getAddress(token) === getAddress(TOKENS.mUSDC) ? "mUSDC" : `m${strategyInputs[strategyKey].label}`;
+}
+
+function tokenDecimals(token: Address, strategyKey: LegKey) {
+  return getAddress(token) === getAddress(TOKENS.mUSDC) ? 6 : strategyInputs[strategyKey].decimals;
 }
 
 async function approveToken(account: Address, token: Address, spender: Address, step: StepKey, message: string, onUpdate: SendUpdate) {
@@ -502,7 +744,9 @@ function getOrCreateReserveId(account: Address): Hex {
   const existing = window.localStorage.getItem(key);
   if (existing?.startsWith("0x") && existing.length === 66) return existing as Hex;
 
-  return createFreshMakerSession(account).reserveId;
+  const reserveId = createReserveId(getAddress(account), Date.now().toString());
+  window.localStorage.setItem(key, reserveId);
+  return reserveId;
 }
 
 function getStoredMakerSession(): MakerSession | null {
@@ -526,19 +770,80 @@ function saveMakerSession(session: MakerSession) {
 }
 
 async function readShippedStrategies(publicClient: PublicClient, account: Address, reserveId: Hex) {
-  const strategies = strategyKeys.map((key) => buildStrategy(key, account, reserveId));
+  const plans = strategyKeys.map((key) => buildStrategyPlan(account, reserveId, key));
   const balances = await Promise.all(
-    strategies.map((strategy) =>
+    plans.map((plan) =>
       publicClient.readContract({
         address: AQUA_ADDRESS,
         abi: ABI.AQUA_ABI,
         functionName: "rawBalances",
-        args: [account, DRY_POWDER_ROUTER, strategy.strategyHash, TOKENS.mUSDC]
+        args: [account, DRY_POWDER_ROUTER, plan.strategy.strategyHash, TOKENS.mUSDC]
       })
     )
   );
 
-  return Object.fromEntries(balances.map(([, tokensCount], index) => [strategyKeys[index], tokensCount > 0 && tokensCount !== 255])) as Record<LegKey, boolean>;
+  const shipped = await Promise.all(balances.map(async ([, tokensCount], index) => {
+    if (tokensCount > 0 && tokensCount !== 255) return true;
+    const transaction = plans[index].shipTransaction;
+    try {
+      await publicClient.call({
+        account,
+        to: transaction.to,
+        data: transaction.data,
+        value: transaction.value
+      });
+      return false;
+    } catch (error) {
+      if (isAquaAlreadyShippedError(error)) return true;
+      return false;
+    }
+  }));
+
+  return Object.fromEntries(shipped.map((value, index) => [strategyKeys[index], value])) as Record<LegKey, boolean>;
+}
+
+async function isStrategyShipped(account: Address, reserveId: Hex, key: LegKey) {
+  const { publicClient } = makeClients(account);
+  const strategy = buildStrategy(key, account, reserveId);
+  const [, tokensCount] = await publicClient.readContract({
+    address: AQUA_ADDRESS,
+    abi: ABI.AQUA_ABI,
+    functionName: "rawBalances",
+    args: [account, DRY_POWDER_ROUTER, strategy.strategyHash, TOKENS.mUSDC]
+  });
+
+  return tokensCount > 0 && tokensCount !== 255;
+}
+
+function isAquaAlreadyShippedError(error: unknown): boolean {
+  return errorContains(error, [AQUA_STRATEGY_IMMUTABLE_SELECTOR, "StrategiesMustBeImmutable"]);
+}
+
+function isAquaDockMismatchError(error: unknown): boolean {
+  return errorContains(error, [AQUA_DOCK_MISMATCH_SELECTOR, "DockingShouldCloseAllTokens"]);
+}
+
+function errorContains(error: unknown, needles: string[]): boolean {
+  const seen = new Set<unknown>();
+  const stack = [error];
+
+  while (stack.length > 0) {
+    const value = stack.pop();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+
+    if (typeof value === "string") {
+      if (needles.some((needle) => value.includes(needle))) return true;
+      continue;
+    }
+
+    if (typeof value !== "object") continue;
+    for (const property of ["message", "shortMessage", "details", "data", "cause"]) {
+      stack.push((value as Record<string, unknown>)[property]);
+    }
+  }
+
+  return false;
 }
 
 function reserveStorageKey(account: Address) {
